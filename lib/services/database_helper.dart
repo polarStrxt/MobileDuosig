@@ -3,7 +3,7 @@ import 'package:path/path.dart';
 
 class DatabaseHelper {
   static const String _databaseName = "docig_venda.db";
-  static const int _databaseVersion = 4; // Atualizado para versão 4 💖
+  static const int _databaseVersion = 5; // Atualizado para versão 5
 
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
@@ -84,7 +84,8 @@ class DatabaseHelper {
     ''');
 
     await _createCarrinhoItens(db);
-    await _createCondicaoPagamento(db); // 🌟 Tabela nova aqui
+    await _createCondicaoPagamento(db);
+    await _createConfig(db); // Nova tabela campos
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -94,6 +95,10 @@ class DatabaseHelper {
 
     if (oldVersion < 4) {
       await _createCondicaoPagamento(db);
+    }
+    
+    if (oldVersion < 5) {
+      await _createConfig(db);
     }
   }
 
@@ -118,6 +123,19 @@ class DatabaseHelper {
       dcrcndpgt TEXT NOT NULL,
       perdsccel REAL NOT NULL,
       staati TEXT NOT NULL
+    );
+    ''');
+  }
+  
+  Future<void> _createConfig(Database db) async {
+    await db.execute('''
+    CREATE TABLE IF NOT EXISTS config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cod_vendedor TEXT NOT NULL,
+      endereco_api TEXT NOT NULL,
+      usuario_duosig TEXT NOT NULL,
+      usuario TEXT NOT NULL,
+      senha TEXT NOT NULL
     );
     ''');
   }
