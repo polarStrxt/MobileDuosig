@@ -3,49 +3,78 @@ import 'package:flutter_docig_venda/screens/homeScreen.dart';
 import 'package:flutter_docig_venda/widgets/textField.dart';
 
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController usuarioController = TextEditingController();
-  final TextEditingController senhaController = TextEditingController();
-  bool isLoading = false;
+  final TextEditingController _usuarioController = TextEditingController();
+  final TextEditingController _senhaController = TextEditingController();
+  bool _isLoading = false;
+
+  // Credenciais válidas
+  static const List<String> _loginCredentials = [
+    'tone:123',
+    'erick:erick124',
+    'victor:senha',
+    'adm:adm'
+  ];
 
   void _handleLogin() {
-    if (usuarioController.text.isEmpty || senhaController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Por favor, preencha todos os campos.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    // Validar campos
+    if (_usuarioController.text.isEmpty || _senhaController.text.isEmpty) {
+      _showErrorSnackBar('Por favor, preencha todos os campos.');
       return;
     }
 
     setState(() {
-      isLoading = true;
+      _isLoading = true;
     });
 
-    // Simular um tempo de processamento
-    Future.delayed(Duration(seconds: 1), () {
-      String usuario = usuarioController.text;
-      String senha = senhaController.text;
+    // Simular tempo de processamento
+    Future.delayed(const Duration(seconds: 1), () {
+      final String usuario = _usuarioController.text;
+      final String senha = _senhaController.text;
 
-      // Chamar a função de verificação
-      FuncVerificacao(context, usuario, senha);
+      _verificarCredenciais(usuario, senha);
 
       setState(() {
-        isLoading = false;
+        _isLoading = false;
       });
-
-      print('Tentativa de login: $usuario');
     });
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
+  void _verificarCredenciais(String usuario, String senha) {
+    final String credenciais = '$usuario:$senha';
+
+    if (_loginCredentials.contains(credenciais)) {
+      // Login bem-sucedido
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => HomeScreen()),
+      );
+    } else {
+      // Login falhou
+      _showErrorSnackBar('Usuário ou senha incorretos!');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Obtém o tamanho da tela para responsividade
     final Size screenSize = MediaQuery.of(context).size;
     final bool isSmallScreen = screenSize.width < 360;
 
@@ -54,192 +83,178 @@ class _LoginScreenState extends State<LoginScreen> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: EdgeInsets.all(24.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Espaço para logo do cliente
-                Container(
-                  height: 120,
-                  margin: EdgeInsets.symmetric(horizontal: 50, vertical: 20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        offset: Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Center(
-                    child: Text(
-                      "LOGO DO CLIENTE",
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    ),
+                // Logo da empresa
+                Hero(
+                  tag: 'logo',
+                  child: Image.asset(
+                    'assets/MobileDousigSemfundo.png',
+                    height: 160,
+                    width: 160,
                   ),
                 ),
 
-                SizedBox(height: 40),
-
-                // Ícone da aplicação e título
-                Center(
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: Color(0xFF5D5CDE),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Icon(
-                      Icons.shopping_cart,
-                      size: 40,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-
-                SizedBox(height: 24),
+                const SizedBox(height: 16),
 
                 // Título da aplicação
-                Center(
-                  child: Text(
-                    'Sistema de Vendas',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF5D5CDE),
-                    ),
+                const Text(
+                  'Sistema de Vendas',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF5D5CDE),
                   ),
+                  textAlign: TextAlign.center,
                 ),
 
-                SizedBox(height: 10),
+                const SizedBox(height: 8),
 
                 // Subtítulo
-                Center(
-                  child: Text(
-                    'Entre com suas credenciais para acessar',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
-                    ),
-                    textAlign: TextAlign.center,
+                Text(
+                  'Entre com suas credenciais para acessar',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[600],
                   ),
+                  textAlign: TextAlign.center,
                 ),
 
-                SizedBox(height: 40),
+                const SizedBox(height: 32),
 
-                // Título do formulário
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Login',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF5D5CDE),
-                    ),
+                // Login form
+                Card(
+                  elevation: 2,
+                  shadowColor: Colors.black26,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                ),
-
-                SizedBox(height: 20),
-
-                // Campo de usuário
-                Leia(
-                  texto: 'Digite seu usuário',
-                  icone: Icons.person,
-                  dados: usuarioController,
-                ),
-
-                SizedBox(height: 16),
-
-                // Campo de senha
-                Leia(
-                  texto: 'Digite sua senha',
-                  icone: Icons.lock,
-                  dados: senhaController,
-                  isPassword: true,
-                ),
-
-                SizedBox(height: 16),
-
-                // Esqueci minha senha
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: () {
-                      // Implementar funcionalidade de recuperação de senha
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('Funcionalidade em desenvolvimento.'),
-                          backgroundColor: Colors.grey[700],
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Título do formulário
+                        const Text(
+                          'Login',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF5D5CDE),
+                          ),
                         ),
-                      );
-                    },
-                    child: Text(
-                      'Esqueci minha senha',
-                      style: TextStyle(
-                        color: Color(0xFF5D5CDE),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
 
-                SizedBox(height: 24),
+                        const SizedBox(height: 20),
 
-                // Botão de login
-                SizedBox(
-                  height: 55,
-                  child: ElevatedButton(
-                    onPressed: isLoading ? null : _handleLogin,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Color(0xFF5D5CDE),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor:
-                          Color(0xFF5D5CDE).withOpacity(0.6),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
-                    ),
-                    child: isLoading
-                        ? SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 3,
+                        // Campo de usuário
+                        Leia(
+                          texto: 'Digite seu usuário',
+                          icone: Icons.person,
+                          dados: _usuarioController,
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        // Campo de senha
+                        Leia(
+                          texto: 'Digite sua senha',
+                          icone: Icons.lock,
+                          dados: _senhaController,
+                          isPassword: true,
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        // Esqueci minha senha
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: const Text(
+                                      'Funcionalidade em desenvolvimento.'),
+                                  backgroundColor: Colors.grey[700],
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  margin: const EdgeInsets.all(16),
+                                ),
+                              );
+                            },
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF5D5CDE),
+                              minimumSize: Size.zero,
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8, horizontal: 12),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                          )
-                        : Text(
-                            'ENTRAR',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
+                            child: const Text(
+                              'Esqueci minha senha',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        // Botão de login
+                        SizedBox(
+                          height: 55,
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _handleLogin,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF5D5CDE),
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor:
+                                  const Color(0xFF5D5CDE).withOpacity(0.6),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: _isLoading
+                                ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 3,
+                                    ),
+                                  )
+                                : const Text(
+                                    'ENTRAR',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 1.2,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
 
-                SizedBox(height: 40),
+                const SizedBox(height: 24),
 
                 // Rodapé com informações adicionais
-                Center(
-                  child: Text(
-                    'Versão 1.0.0',
-                    style: TextStyle(
-                      color: Colors.grey[500],
-                      fontSize: 12,
-                    ),
+                Text(
+                  'Versão 1.0.0',
+                  style: TextStyle(
+                    color: Colors.grey[500],
+                    fontSize: 12,
                   ),
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),
@@ -251,32 +266,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
-    usuarioController.dispose();
-    senhaController.dispose();
+    _usuarioController.dispose();
+    _senhaController.dispose();
     super.dispose();
-  }
-}
-
-void FuncVerificacao(BuildContext context, String user, String pass) {
-  List<String> loginList = [
-    'tone:123',
-    'erick:erick124',
-    'victor:senha',
-    'adm:adm'
-  ];
-  String credenciais = '$user:$pass';
-
-  if (loginList.contains(credenciais)) {
-    print('✅ Bem-vindo.');
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => HomeScreen()),
-    );
-  } else {
-    print('❌ Usuário ou senha inválida.');
-
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text("Senha ou usuário incorretos!")));
   }
 }

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-class AppDrawer extends StatelessWidget {
-  final Function clearAllTables;
-  final Function syncAllTables;
+/// A custom drawer widget providing application navigation and system actions.
+///
+/// This drawer includes options for synchronizing data, clearing tables,
+/// viewing app information, and exiting the application.
+class AppDrawer extends StatefulWidget {
+  final Future<void> Function() clearAllTables;
+  final Future<void> Function() syncAllTables;
 
   const AppDrawer({
     Key? key,
@@ -12,352 +16,576 @@ class AppDrawer extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<AppDrawer> createState() => _AppDrawerState();
+}
+
+class _AppDrawerState extends State<AppDrawer> {
+  // Store ScaffoldMessenger reference for safe use in async operations
+  late ScaffoldMessengerState _scaffoldMessenger;
+
+  // Constants
+  static const Color _primaryColor = Color(0xFF5D5CDE);
+  static const Duration _snackBarDuration = Duration(seconds: 3);
+  static const Duration _longSnackBarDuration = Duration(seconds: 5);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scaffoldMessenger = ScaffoldMessenger.of(context);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          // Cabeçalho do Drawer
-          DrawerHeader(
-            decoration: BoxDecoration(
-              color: Color(0xFF5D5CDE),
+      elevation: 2,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(
+          topRight: Radius.circular(12),
+          bottomRight: Radius.circular(12),
+        ),
+      ),
+      child: SafeArea(
+        child: Column(
+          children: [
+            _buildDrawerHeader(),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _buildSyncOption(),
+                  _buildClearTablesOption(),
+                  const Divider(height: 1),
+                  _buildAboutOption(),
+                  _buildExitOption(),
+                ],
+              ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDrawerHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      decoration: const BoxDecoration(
+        color: _primaryColor,
+      ),
+      child: Row(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const CircleAvatar(
+              backgroundColor: Colors.white,
+              radius: 28,
+              child: Icon(
+                Icons.store_rounded,
+                size: 28,
+                color: _primaryColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: Colors.white,
-                  radius: 30,
-                  child: Icon(
-                    Icons.store,
-                    size: 30,
-                    color: Color(0xFF5D5CDE),
-                  ),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  'Dousig Vendas',
+                const Text(
+                  'Mobile DuoSig',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
                   ),
                 ),
+                const SizedBox(height: 4),
                 Text(
                   'Sistema de vendas',
                   style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
+                    color: Colors.white.withOpacity(0.9),
                     fontSize: 14,
+                    fontWeight: FontWeight.w400,
                   ),
                 ),
               ],
             ),
-          ),
-
-          // NOVO Item de Menu - Sincronizar Todas Tabelas
-          ListTile(
-            leading: Icon(Icons.sync, color: Color(0xFF5D5CDE)),
-            title: Text(
-              'Sincronizar Todas Tabelas',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text('Baixar dados de todas as APIs'),
-            onTap: () {
-              _confirmarSincronizacaoTabelas(context);
-            },
-          ),
-
-          // Item de Menu - Limpar Tabelas
-          ListTile(
-            leading: Icon(Icons.cleaning_services, color: Colors.red),
-            title: Text(
-              'Limpar Tabelas',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text('Exclui todos os dados do aplicativo'),
-            onTap: () {
-              _confirmarLimpezaTabelas(context);
-            },
-          ),
-
-          Divider(),
-
-          // Item de Menu - Sobre
-          ListTile(
-            leading: Icon(Icons.info_outline, color: Color(0xFF5D5CDE)),
-            title: Text('Sobre'),
-            onTap: () {
-              // Exibir informações sobre o app
-              Navigator.pop(context);
-              _mostrarSobreDialog(context);
-            },
-          ),
-
-          // Item de Menu - Sair
-          ListTile(
-            leading: Icon(Icons.exit_to_app, color: Color(0xFF5D5CDE)),
-            title: Text('Sair'),
-            onTap: () {
-              // Fecha o drawer
-              Navigator.pop(context);
-              // Mostra diálogo de confirmação
-              _confirmarSair(context);
-            },
           ),
         ],
       ),
     );
   }
 
-  // NOVA função: Diálogo de confirmação antes de sincronizar as tabelas
-  void _confirmarSincronizacaoTabelas(BuildContext context) {
+  Widget _buildSyncOption() {
+    return _buildDrawerTile(
+      icon: Icons.sync_rounded,
+      iconColor: _primaryColor,
+      title: 'Sincronizar Dados',
+      subtitle: 'Atualizar informações do servidor',
+      onTap: () => _confirmSyncTables(context),
+    );
+  }
+
+  Widget _buildClearTablesOption() {
+    return _buildDrawerTile(
+      icon: Icons.cleaning_services_rounded,
+      iconColor: Colors.redAccent,
+      title: 'Limpar Tabelas',
+      subtitle: 'Remover todos os dados do aplicativo',
+      onTap: () => _confirmClearTables(context),
+    );
+  }
+
+  Widget _buildAboutOption() {
+    return _buildDrawerTile(
+      icon: Icons.info_outline_rounded,
+      iconColor: _primaryColor,
+      title: 'Sobre',
+      onTap: () {
+        Navigator.pop(context);
+        _showAboutDialog(context);
+      },
+    );
+  }
+
+  Widget _buildExitOption() {
+    return _buildDrawerTile(
+      icon: Icons.logout_rounded,
+      iconColor: _primaryColor,
+      title: 'Sair',
+      onTap: () {
+        Navigator.pop(context);
+        _confirmExit(context);
+      },
+    );
+  }
+
+  Widget _buildDrawerTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    Color iconColor = _primaryColor,
+    String? subtitle,
+  }) {
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: iconColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          icon,
+          color: iconColor,
+          size: 22,
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(
+          fontWeight: FontWeight.w500,
+          fontSize: 15,
+        ),
+      ),
+      subtitle: subtitle != null
+          ? Text(
+              subtitle,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+              ),
+            )
+          : null,
+      onTap: onTap,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  /// Confirmation dialog for table synchronization
+  void _confirmSyncTables(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.sync, color: Color(0xFF5D5CDE)),
-              SizedBox(width: 10),
-              Text('Sincronizar Tabelas'),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-          content: Text(
-            'Esta ação irá baixar todos os dados das APIs e atualizar o banco local.\n\n'
-            'Isso pode demorar alguns minutos dependendo da sua conexão. Deseja continuar?',
+          title: _buildDialogTitle(
+            icon: Icons.sync_rounded,
+            title: 'Sincronizar Dados',
+          ),
+          content: const Text(
+            'Esta ação irá baixar todos os dados do servidor e atualizar o banco local.\n\n'
+            'Isso pode levar alguns minutos dependendo da sua conexão. Deseja continuar?',
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Fecha o diálogo
-              },
-              child: Text('CANCELAR'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('CANCELAR'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[700],
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF5D5CDE),
+                backgroundColor: _primaryColor,
                 foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              onPressed: () async {
-                Navigator.of(context).pop(); // Fecha o diálogo
-
-                // Mostra um indicador de progresso
-                _mostrarCarregando(context, 'Sincronizando tabelas...');
-
-                try {
-                  // Executa a função de sincronizar tabelas
-                  await syncAllTables();
-
-                  // Fecha o diálogo de carregamento
-                  Navigator.of(context).pop();
-
-                  // Mostra mensagem de sucesso
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                          'Todas as tabelas foram sincronizadas com sucesso!'),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 3),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                } catch (e) {
-                  // Fecha o diálogo de carregamento em caso de erro
-                  Navigator.of(context).pop();
-
-                  // Mostra mensagem de erro
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Erro ao sincronizar tabelas: $e'),
-                      backgroundColor: Colors.red,
-                      duration: Duration(seconds: 5),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                }
-              },
-              child: Text('SINCRONIZAR'),
+              onPressed: () => _handleSyncTables(dialogContext),
+              child: const Text('SINCRONIZAR'),
             ),
           ],
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         );
       },
     );
   }
 
-  // Diálogo de confirmação antes de limpar as tabelas
-  void _confirmarLimpezaTabelas(BuildContext context) {
+  /// Handles the table synchronization process
+  Future<void> _handleSyncTables(BuildContext dialogContext) async {
+    // Close the confirmation dialog
+    Navigator.of(dialogContext).pop();
+
+    // Show loading indicator
+    _showLoadingDialog('Sincronizando dados...');
+
+    try {
+      // Execute the sync function
+      await widget.syncAllTables();
+
+      // Close loading dialog if widget is still mounted
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // Show success message
+      _showSnackBar(
+        message: 'Dados sincronizados com sucesso!',
+        isError: false,
+      );
+    } catch (e) {
+      // Close loading dialog if widget is still mounted
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // Show error message
+      _showSnackBar(
+        message: 'Erro ao sincronizar dados: $e',
+        isError: true,
+        duration: _longSnackBarDuration,
+      );
+    }
+  }
+
+  /// Confirmation dialog for clearing tables
+  void _confirmClearTables(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange),
-              SizedBox(width: 10),
-              Text('Atenção!'),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-          content: Text(
-            'Esta ação irá excluir TODOS os dados do aplicativo '
+          title: _buildDialogTitle(
+            icon: Icons.warning_amber_rounded,
+            title: 'Atenção',
+            iconColor: Colors.orange,
+          ),
+          content: const Text(
+            'Esta ação irá remover TODOS os dados do aplicativo '
             '(clientes, produtos e duplicatas).\n\n'
             'Esta operação não pode ser desfeita. Deseja continuar?',
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Fecha o diálogo
-              },
-              child: Text('CANCELAR'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('CANCELAR'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[700],
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
+                backgroundColor: Colors.redAccent,
                 foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              onPressed: () async {
-                Navigator.of(context).pop(); // Fecha o diálogo
-
-                // Mostra um indicador de progresso
-                _mostrarCarregando(context, 'Limpando tabelas...');
-
-                try {
-                  // Executa a função de limpar tabelas
-                  await clearAllTables();
-
-                  // Fecha o diálogo de carregamento
-                  Navigator.of(context).pop();
-
-                  // Mostra mensagem de sucesso
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content:
-                          Text('Todas as tabelas foram limpas com sucesso!'),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 3),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                } catch (e) {
-                  // Fecha o diálogo de carregamento em caso de erro
-                  Navigator.of(context).pop();
-
-                  // Mostra mensagem de erro
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Erro ao limpar tabelas: $e'),
-                      backgroundColor: Colors.red,
-                      duration: Duration(seconds: 5),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                }
-              },
-              child: Text('LIMPAR TABELAS'),
+              onPressed: () => _handleClearTables(dialogContext),
+              child: const Text('LIMPAR DADOS'),
             ),
           ],
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         );
       },
     );
   }
 
-  // Diálogo com informações sobre o aplicativo
-  void _mostrarSobreDialog(BuildContext context) {
+  /// Handles the table clearing process
+  Future<void> _handleClearTables(BuildContext dialogContext) async {
+    // Close the confirmation dialog
+    Navigator.of(dialogContext).pop();
+
+    // Show loading indicator
+    _showLoadingDialog('Limpando dados...');
+
+    try {
+      // Execute the clear tables function
+      await widget.clearAllTables();
+
+      // Close loading dialog if widget is still mounted
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // Show success message
+      _showSnackBar(
+        message: 'Dados removidos com sucesso',
+        isError: false,
+      );
+    } catch (e) {
+      // Close loading dialog if widget is still mounted
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // Show error message
+      _showSnackBar(
+        message: 'Erro ao limpar dados: $e',
+        isError: true,
+        duration: _longSnackBarDuration,
+      );
+    }
+  }
+
+  /// About dialog showing application information
+  void _showAboutDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: Text('Sobre o Aplicativo'),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          title: _buildDialogTitle(
+            icon: Icons.info_outline_rounded,
+            title: 'Sobre o Aplicativo',
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Dousig Vendas',
+              const Text(
+                'DuoSig Vendas',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                   fontSize: 18,
                 ),
               ),
-              SizedBox(height: 8),
-              Text('Versão 1.0.0'),
-              SizedBox(height: 16),
-              Text(
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: _primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text(
+                      'Versão 1.0.0',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: _primaryColor,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text(
                 'Aplicativo de vendas desenvolvido para facilitar o '
                 'gerenciamento de clientes, produtos e pedidos.',
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '© 2025 DuoTec Sistemas',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                ),
               ),
             ],
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: Text('FECHAR'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('FECHAR'),
+              style: TextButton.styleFrom(
+                foregroundColor: _primaryColor,
+              ),
             ),
           ],
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         );
       },
     );
   }
 
-  // Diálogo de carregamento
-  void _mostrarCarregando(BuildContext context, String mensagem) {
+  /// Loading dialog with a progress indicator
+  void _showLoadingDialog(String message) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
-              ),
-              SizedBox(width: 20),
-              Text(mensagem),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          content: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: CircularProgressIndicator(
+                    valueColor: AlwaysStoppedAnimation<Color>(_primaryColor),
+                    strokeWidth: 3,
+                  ),
+                ),
+                const SizedBox(width: 24),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
   }
 
-  // Diálogo de confirmação para sair
-  void _confirmarSair(BuildContext context) {
+  /// Exit confirmation dialog
+  void _confirmExit(BuildContext context) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (dialogContext) {
         return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.exit_to_app, color: Color(0xFF5D5CDE)),
-              SizedBox(width: 10),
-              Text('Sair do Aplicativo'),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-          content: Text(
-            'Deseja realmente sair do aplicativo?\nQuaisquer alterações não salvas serão perdidas.',
+          title: _buildDialogTitle(
+            icon: Icons.logout_rounded,
+            title: 'Sair do Aplicativo',
+          ),
+          content: const Text(
+            'Deseja realmente sair do aplicativo?\n'
+            'Alterações não salvas serão perdidas.',
           ),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Fecha o diálogo
-              },
-              child: Text('CANCELAR'),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('CANCELAR'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[700],
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF5D5CDE),
+                backgroundColor: _primaryColor,
                 foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
-              onPressed: () {
-                // Fecha o aplicativo
-                SystemNavigator.pop();
-              },
-              child: Text('SAIR'),
+              onPressed: () => SystemNavigator.pop(),
+              child: const Text('SAIR'),
             ),
           ],
+          actionsPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         );
       },
+    );
+  }
+
+  /// Helper method to build dialog titles with consistent styling
+  Widget _buildDialogTitle({
+    required IconData icon,
+    required String title,
+    Color iconColor = _primaryColor,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: iconColor, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Helper method to show a snackbar message
+  void _showSnackBar({
+    required String message,
+    required bool isError,
+    Duration duration = _snackBarDuration,
+  }) {
+    _scaffoldMessenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.redAccent : Colors.green,
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        margin: const EdgeInsets.all(8),
+      ),
     );
   }
 }

@@ -3,11 +3,9 @@ import 'package:flutter_docig_venda/widgets/perfilCriente.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/apiCliente.dart';
 import 'package:flutter_docig_venda/services/dao/cliente_dao.dart';
-import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
-import 'package:flutter_docig_venda/services/dao/duplicata_dao.dart';
 import 'package:flutter_docig_venda/widgets/app_drawer.dart';
-// Adicione a importação do SyncService
-import 'package:flutter_docig_venda/services/sincronizacao.dart'; // Ajuste o caminho de importação conforme necessário
+import 'package:flutter_docig_venda/services/sincronizacao.dart';
+import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
   @override
@@ -15,22 +13,29 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // Constantes
+  final Color primaryColor = Color(0xFF5D5CDE);
+
+  // Estado da lista
   List<Cliente> clientes = [];
   List<Cliente> clientesFiltrados = [];
+  Map<String, String> clienteSearchIndex = {};
+
+  // Estado de carregamento
   bool isLoading = true;
+  bool isSyncing = false;
+  double syncProgress = 0.0;
+  String syncStatus = '';
   bool hasError = false;
   String errorMessage = '';
-  bool isSyncing = false;
 
-  // Instância do DAO para acessar dados locais
+  // Controllers
   final ClienteDao _clienteDao = ClienteDao();
-
-  // Adicione a instância do SyncService
   final SyncService _syncService = SyncService();
-
-  // Controlador para o campo de pesquisa
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
+  Timer? _debounceTimer;
+  Function(double, String)? _updateDialogUI;
 
   @override
   void initState() {
@@ -42,164 +47,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _searchController.dispose();
     _searchFocus.dispose();
+    _debounceTimer?.cancel();
     super.dispose();
   }
 
-  // IMPORTANTE: Método modificado para garantir que erros sejam tratados corretamente
-  Future<void> _handleSyncAllTables() async {
-    // Verificação de segurança para evitar múltiplas sincronizações
-    if (isSyncing) {
-      print("⚠️ Sincronização já em andamento, ignorando nova solicitação");
-      return;
-    }
+  // MÉTODOS DE CARREGAMENTO DE DADOS
 
-    // Mostra um diálogo de carregamento para feedback visual imediato
-    _mostrarCarregando("Sincronizando todas as tabelas...");
-
-    try {
-      setState(() {
-        isSyncing = true;
-      });
-
-      // Verifica conexão com internet antes de prosseguir
-      bool hasInternet = await _syncService.hasInternetConnection();
-      if (!hasInternet) {
-        // Fecha o diálogo de carregamento
-        Navigator.of(context).pop();
-
-        setState(() {
-          isSyncing = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'Sem conexão com a internet. Verifique sua conexão e tente novamente.'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        return;
-      }
-
-      // Executa a sincronização com timeout de segurança
-      final results = await _syncWithTimeout();
-
-      // Fecha o diálogo de carregamento
-      Navigator.of(context).pop();
-
-      // Recarrega os dados do cliente após a sincronização
-      await carregarClientesLocal();
-
-      setState(() {
-        isSyncing = false;
-      });
-
-      // Cria uma mensagem com os resultados
-      if (results != null && results.isNotEmpty) {
-        String mensagem = 'Sincronização concluída:\n';
-        results.forEach((tabela, quantidade) {
-          mensagem += '$tabela: $quantidade registros\n';
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(mensagem),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Sincronização concluída com sucesso!'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      // Fecha o diálogo de carregamento em caso de erro
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-
-      print("❌ Erro na sincronização: $e");
-
-      setState(() {
-        isSyncing = false;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao sincronizar: $e'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 5),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  // Método para evitar que a sincronização fique travada
-  Future<Map<String, int>?> _syncWithTimeout() async {
-    try {
-      return await Future.any([
-        _syncService.syncAllData(),
-        Future.delayed(Duration(minutes: 2), () {
-          throw TimeoutException('Tempo limite excedido na sincronização');
-        }),
-      ]);
-    } on TimeoutException {
-      throw TimeoutException(
-          'A sincronização demorou muito tempo e foi cancelada. Tente novamente.');
-    }
-  }
-
-  // Método para limpar todas as tabelas com tratamento de erros aprimorado
-  Future<void> _handleClearAllTables() async {
-    try {
-      // Mostrar diálogo de carregamento
-      _mostrarCarregando("Limpando todas as tabelas...");
-
-      await _syncService.clearAllTables();
-
-      // Fechar diálogo de carregamento
-      Navigator.of(context).pop();
-
-      // Recarregar a lista depois da limpeza
-      setState(() {
-        clientes = [];
-        clientesFiltrados = [];
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Todas as tabelas foram limpas com sucesso!'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (e) {
-      // Fechar diálogo de carregamento em caso de erro
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-
-      print("❌ Erro ao limpar tabelas: $e");
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao limpar tabelas: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
-  // Método para carregar clientes do banco de dados local
   Future<void> carregarClientesLocal() async {
     setState(() {
       isLoading = true;
@@ -207,9 +60,9 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // Usar o DAO para buscar todos os clientes localmente
       List<Cliente> listaLocal =
           await _clienteDao.getAll((json) => Cliente.fromJson(json));
+      _buildSearchIndex(listaLocal);
 
       setState(() {
         clientes = listaLocal;
@@ -217,40 +70,60 @@ class _HomeScreenState extends State<HomeScreen> {
         isLoading = false;
       });
 
-      // Se o banco estiver vazio, tenta sincronizar com a API
       if (listaLocal.isEmpty) {
         sincronizarComAPI();
       }
     } catch (e) {
-      print("❌ Erro ao buscar clientes do banco local: $e");
       setState(() {
         isLoading = false;
         hasError = true;
-        errorMessage = "Erro ao buscar dados locais: $e";
+        errorMessage =
+            "Erro ao buscar dados locais: ${_getFriendlyErrorMessage(e)}";
       });
     }
   }
 
-  // Método para sincronizar dados com a API e salvar localmente
+  void _buildSearchIndex(List<Cliente> listaClientes) {
+    Map<String, String> searchIndex = {};
+    for (var cliente in listaClientes) {
+      final lowerNome = cliente.nomcli.toLowerCase();
+      final lowerTel = cliente.numtel001.toLowerCase();
+      final lowerEnd = cliente.endcli.toLowerCase();
+      final lowerBairro = cliente.baicli.toLowerCase();
+      final lowerMun = cliente.muncli.toLowerCase();
+
+      searchIndex[cliente.codcli.toString()] =
+          '$lowerNome $lowerTel $lowerEnd $lowerBairro $lowerMun ${cliente.codcli}';
+    }
+    clienteSearchIndex = searchIndex;
+  }
+
+  // MÉTODOS DE SINCRONIZAÇÃO
+
   Future<void> sincronizarComAPI() async {
-    if (isSyncing) return; // Evita múltiplas sincronizações simultâneas
+    if (isSyncing) {
+      _mostrarSnackBar('Sincronização em andamento', Colors.black87);
+      return;
+    }
 
     setState(() {
       isSyncing = true;
     });
 
+    _mostrarDialogoCarregamento(mensagem: 'Sincronizando dados dos clientes');
+
     try {
-      // Buscar da API
       List<Cliente> listaAPI = await ClienteService.buscarClientes();
 
-      // Salvar no banco local
       for (var cliente in listaAPI) {
         await _clienteDao.insertOrUpdate(cliente.toJson(), 'codcli');
       }
 
-      // Recarregar dados do banco local
+      Navigator.of(context).pop();
+
       List<Cliente> listaAtualizada =
           await _clienteDao.getAll((json) => Cliente.fromJson(json));
+      _buildSearchIndex(listaAtualizada);
 
       setState(() {
         clientes = listaAtualizada;
@@ -258,139 +131,291 @@ class _HomeScreenState extends State<HomeScreen> {
         isSyncing = false;
       });
 
-      // Mostrar mensagem de sucesso
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Dados sincronizados com sucesso!'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      _mostrarSnackBar(
+          '${listaAPI.length} clientes sincronizados', primaryColor);
     } catch (e) {
-      print("❌ Erro na sincronização: $e");
+      Navigator.of(context).pop();
       setState(() {
         isSyncing = false;
-        // Não mudar hasError para true, pois ainda temos dados locais
       });
 
-      // Mostrar mensagem de erro
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao sincronizar dados: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      _mostrarSnackBar('Erro na sincronização: ${_getFriendlyErrorMessage(e)}',
+          Colors.red[700]!);
     }
   }
 
-  // Método para filtrar clientes com base no texto de pesquisa
-  void filtrarClientes(String query) {
-    final String termoBusca = query.toLowerCase().trim();
+  Future<void> _handleSyncAllTables() async {
+    if (isSyncing) {
+      _mostrarSnackBar('Sincronização em andamento', Colors.black87);
+      return;
+    }
 
     setState(() {
-      if (termoBusca.isEmpty) {
-        clientesFiltrados = clientes;
-      } else {
-        clientesFiltrados = clientes.where((cliente) {
-          return (cliente.nomcli.toLowerCase().contains(termoBusca)) ||
-              (cliente.numtel001.toLowerCase().contains(termoBusca)) ||
-              (cliente.endcli.toLowerCase().contains(termoBusca));
-        }).toList();
+      isSyncing = true;
+      syncProgress = 0.0;
+      syncStatus = 'Verificando conexão';
+    });
+
+    _mostrarDialogoProgressivo();
+
+    try {
+      bool hasInternet = await _syncService.hasInternetConnection();
+      if (!hasInternet) {
+        Navigator.of(context).pop();
+        setState(() {
+          isSyncing = false;
+          _updateDialogUI = null;
+        });
+        _mostrarSnackBar('Sem conexão com a internet', Colors.red[700]!);
+        return;
       }
+
+      _atualizarProgresso(0.25, 'Sincronizando dados');
+
+      final results = await _syncWithTimeout();
+
+      _atualizarProgresso(1.0, 'Concluído');
+      await Future.delayed(Duration(milliseconds: 300));
+
+      Navigator.of(context).pop();
+
+      await carregarClientesLocal();
+
+      setState(() {
+        isSyncing = false;
+        _updateDialogUI = null;
+      });
+
+      if (results != null && results.isNotEmpty) {
+        int totalRegistros =
+            results.values.fold(0, (sum, value) => sum + value);
+        _mostrarSnackBar(
+            'Sincronização concluída: $totalRegistros registros', primaryColor);
+      } else {
+        _mostrarSnackBar('Sincronização concluída', primaryColor);
+      }
+    } catch (e) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+
+      setState(() {
+        isSyncing = false;
+        _updateDialogUI = null;
+      });
+
+      _mostrarSnackBar(
+          'Erro: ${_getFriendlyErrorMessage(e)}', Colors.red[700]!);
+    }
+  }
+
+  Future<Map<String, int>?> _syncWithTimeout() async {
+    try {
+      return await Future.any([
+        _syncService.syncAllData(),
+        Future.delayed(Duration(minutes: 2), () {
+          throw TimeoutException('Tempo limite excedido');
+        }),
+      ]);
+    } on TimeoutException {
+      throw TimeoutException('A sincronização excedeu o tempo limite');
+    }
+  }
+
+  Future<void> _handleClearAllTables() async {
+    bool confirmar = await showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: Text('Confirmação'),
+              content: Text(
+                  'Deseja realmente limpar todas as tabelas? Esta ação não pode ser desfeita.'),
+              actions: [
+                TextButton(
+                  child: Text('Cancelar'),
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+                TextButton(
+                  child: Text('Confirmar'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red[700],
+                  ),
+                  onPressed: () => Navigator.of(context).pop(true),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+
+    if (!confirmar) return;
+
+    try {
+      _mostrarDialogoCarregamento(mensagem: 'Limpando tabelas');
+
+      await _syncService.clearAllTables();
+
+      Navigator.of(context).pop();
+
+      setState(() {
+        clientes = [];
+        clientesFiltrados = [];
+      });
+
+      _mostrarSnackBar('Dados removidos com sucesso', primaryColor);
+    } catch (e) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+
+      _mostrarSnackBar('Erro ao limpar tabelas', Colors.red[700]!);
+    }
+  }
+
+  // MÉTODOS PARA UI
+
+  void _atualizarProgresso(double progress, String status) {
+    setState(() {
+      syncProgress = progress;
+      syncStatus = status;
+    });
+
+    if (_updateDialogUI != null) {
+      _updateDialogUI!(progress, status);
+    }
+  }
+
+  void _mostrarSnackBar(String mensagem, Color cor) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: cor,
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _mostrarDialogoCarregamento({required String mensagem}) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              ),
+              SizedBox(width: 16),
+              Expanded(child: Text(mensagem)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _mostrarDialogoProgressivo() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            void updateDialog(double progress, String status) {
+              setDialogState(() {
+                syncProgress = progress;
+                syncStatus = status;
+              });
+            }
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _updateDialogUI = updateDialog);
+            });
+
+            return AlertDialog(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(syncStatus,
+                      style: TextStyle(fontWeight: FontWeight.w500)),
+                  SizedBox(height: 16),
+                  LinearProgressIndicator(
+                    value: syncProgress > 0 ? syncProgress : null,
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void filtrarClientes(String query) {
+    if (_debounceTimer?.isActive ?? false) {
+      _debounceTimer!.cancel();
+    }
+
+    _debounceTimer = Timer(Duration(milliseconds: 300), () {
+      final String termoBusca = query.toLowerCase().trim();
+
+      setState(() {
+        if (termoBusca.isEmpty) {
+          clientesFiltrados = clientes;
+        } else {
+          clientesFiltrados = clientes.where((cliente) {
+            final searchText =
+                clienteSearchIndex[cliente.codcli.toString()] ?? '';
+            return searchText.contains(termoBusca);
+          }).toList();
+        }
+      });
     });
   }
+
+  String _getFriendlyErrorMessage(dynamic error) {
+    String message = error.toString();
+
+    if (message.contains('SocketException') ||
+        message.contains('NetworkError')) {
+      return 'Falha na conexão de internet';
+    } else if (message.contains('timeout') ||
+        message.contains('TimeoutException')) {
+      return 'Operação excedeu o tempo limite';
+    } else if (message.contains('API') || message.contains('Server')) {
+      return 'Erro no servidor';
+    }
+
+    return message;
+  }
+
+  // WIDGETS DE UI
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: Text("Clientes"),
-        backgroundColor: Color(0xFF5D5CDE),
-        elevation: 0,
-        actions: [
-          // Botão para sincronizar com a API
-          isSyncing
-              ? Container(
-                  padding: EdgeInsets.all(10),
-                  child: AspectRatio(
-                    aspectRatio: 1,
-                    child: CircularProgressIndicator(
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      strokeWidth: 2,
-                    ),
-                  ),
-                )
-              : IconButton(
-                  icon: Icon(Icons.sync),
-                  onPressed: sincronizarComAPI,
-                  tooltip: 'Sincronizar com a API',
-                ),
-
-          // Botão para recarregar do banco local
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: carregarClientesLocal,
-            tooltip: 'Atualizar lista local',
-          ),
-        ],
-      ),
-      // Usar o AppDrawer com os métodos de tratamento aprimorados
+      backgroundColor: Colors.white,
+      appBar: _buildAppBar(),
       drawer: AppDrawer(
         clearAllTables: _handleClearAllTables,
         syncAllTables: _handleSyncAllTables,
       ),
       body: Column(
         children: [
-          // Barra de Pesquisa
-          Container(
-            color: Colors.white,
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: TextField(
-              controller: _searchController,
-              focusNode: _searchFocus,
-              decoration: InputDecoration(
-                hintText: 'Pesquisar cliente...',
-                prefixIcon: Icon(Icons.search, color: Color(0xFF5D5CDE)),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          filtrarClientes('');
-                          _searchFocus.unfocus();
-                        },
-                      )
-                    : null,
-                filled: true,
-                fillColor: Colors.grey[50],
-                contentPadding: EdgeInsets.symmetric(vertical: 0),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide(color: Colors.grey[300]!),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(30),
-                  borderSide: BorderSide(color: Color(0xFF5D5CDE), width: 1.5),
-                ),
-              ),
-              style: TextStyle(fontSize: 16),
-              onChanged: filtrarClientes,
-            ),
-          ),
-
-          // Divisor entre a barra de pesquisa e a lista
-          Divider(height: 1, thickness: 1, color: Colors.grey[300]),
-
-          // Conteúdo principal
+          _buildSearchBar(),
+          Divider(height: 1, thickness: 1, color: Colors.grey[200]),
           Expanded(
             child: RefreshIndicator(
               onRefresh: carregarClientesLocal,
-              color: Color(0xFF5D5CDE),
+              color: primaryColor,
               child: _buildMainContent(),
             ),
           ),
@@ -399,28 +424,79 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // Método para mostrar diálogo de carregamento
-  void _mostrarCarregando(String mensagem) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: Text(
+        "Clientes",
+        style: TextStyle(fontWeight: FontWeight.w500),
+      ),
+      backgroundColor: primaryColor,
+      elevation: 0,
+      actions: [
+        // Indicador de sincronização
+        if (isSyncing)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  strokeWidth: 2,
+                ),
               ),
-              SizedBox(width: 20),
-              Text(mensagem),
-            ],
+            ),
+          )
+        else
+          IconButton(
+            icon: Icon(Icons.sync),
+            tooltip: 'Sincronizar',
+            onPressed: sincronizarComAPI,
           ),
-        );
-      },
+      ],
     );
   }
 
-  // Restante do código permanece inalterado...
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: TextField(
+        controller: _searchController,
+        focusNode: _searchFocus,
+        decoration: InputDecoration(
+          hintText: 'Pesquisar cliente',
+          prefixIcon: Icon(Icons.search, size: 20),
+          suffixIcon: _searchController.text.isNotEmpty
+              ? IconButton(
+                  icon: Icon(Icons.clear, size: 20),
+                  onPressed: () {
+                    _searchController.clear();
+                    filtrarClientes('');
+                    _searchFocus.unfocus();
+                  },
+                )
+              : null,
+          contentPadding: EdgeInsets.zero,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: Colors.grey[300]!),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: Colors.grey[300]!),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(4),
+            borderSide: BorderSide(color: primaryColor),
+          ),
+        ),
+        style: TextStyle(fontSize: 16),
+        onChanged: filtrarClientes,
+      ),
+    );
+  }
+
   Widget _buildMainContent() {
     if (isLoading) {
       return _buildLoadingState();
@@ -442,13 +518,20 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+            ),
           ),
           SizedBox(height: 16),
           Text(
-            'Carregando clientes...',
-            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+            'Carregando',
+            style: TextStyle(
+              color: Colors.grey[800],
+              fontSize: 16,
+            ),
           ),
         ],
       ),
@@ -461,15 +544,16 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, color: Colors.red[400], size: 60),
+            Icon(Icons.error_outline, color: Colors.red[300], size: 48),
             SizedBox(height: 16),
             Text(
-              'Erro ao carregar clientes',
+              'Erro ao carregar dados',
               style: TextStyle(
                 fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.red[700],
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[800],
               ),
               textAlign: TextAlign.center,
             ),
@@ -480,37 +564,10 @@ class _HomeScreenState extends State<HomeScreen> {
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  icon: Icon(Icons.refresh),
-                  label: Text('Tentar banco local'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Color(0xFF5D5CDE),
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
-                  onPressed: carregarClientesLocal,
-                ),
-                SizedBox(width: 8),
-                ElevatedButton.icon(
-                  icon: Icon(Icons.sync),
-                  label: Text('Sincronizar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
-                  onPressed: sincronizarComAPI,
-                ),
-              ],
+            OutlinedButton.icon(
+              icon: Icon(Icons.refresh),
+              label: Text('Tentar novamente'),
+              onPressed: carregarClientesLocal,
             ),
           ],
         ),
@@ -519,76 +576,54 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildEmptyState() {
-    // Mensagem diferente se há uma pesquisa ativa ou não
     final bool isPesquisaAtiva = _searchController.text.isNotEmpty;
 
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      children: [
-        SizedBox(height: 40),
-        Icon(
-          isPesquisaAtiva ? Icons.search_off : Icons.people_outline,
-          size: 70,
-          color: Colors.grey[400],
-        ),
-        SizedBox(height: 16),
-        Text(
-          isPesquisaAtiva
-              ? 'Nenhum cliente encontrado'
-              : 'Nenhum cliente no banco de dados local',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey[700],
-          ),
-          textAlign: TextAlign.center,
-        ),
-        SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Text(
-            isPesquisaAtiva
-                ? 'Não encontramos nenhum cliente com os termos da sua pesquisa.'
-                : 'O banco de dados local está vazio. Tente sincronizar com a API.',
-            style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        SizedBox(height: 24),
-        Row(
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (isPesquisaAtiva)
-              TextButton.icon(
-                icon: Icon(Icons.clear),
-                label: Text('Limpar pesquisa'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Color(0xFF5D5CDE),
-                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
-                onPressed: () {
-                  _searchController.clear();
-                  filtrarClientes('');
-                  _searchFocus.unfocus();
-                },
+            Icon(
+              isPesquisaAtiva ? Icons.search_off : Icons.people_outline,
+              size: 48,
+              color: Colors.grey[400],
+            ),
+            SizedBox(height: 16),
+            Text(
+              isPesquisaAtiva
+                  ? 'Nenhum cliente encontrado'
+                  : 'Nenhum cliente cadastrado',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[800],
               ),
-            if (!isPesquisaAtiva)
-              ElevatedButton.icon(
-                icon: Icon(Icons.sync),
-                label: Text('Sincronizar com API'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Color(0xFF5D5CDE),
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                ),
-                onPressed: sincronizarComAPI,
-              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 8),
+            Text(
+              isPesquisaAtiva
+                  ? 'Tente outros termos de pesquisa'
+                  : 'Sincronize para carregar os clientes',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 24),
+            OutlinedButton.icon(
+              icon: Icon(isPesquisaAtiva ? Icons.clear : Icons.sync),
+              label: Text(isPesquisaAtiva ? 'Limpar pesquisa' : 'Sincronizar'),
+              onPressed: isPesquisaAtiva
+                  ? () {
+                      _searchController.clear();
+                      filtrarClientes('');
+                      _searchFocus.unfocus();
+                    }
+                  : sincronizarComAPI,
+            ),
           ],
         ),
-      ],
+      ),
     );
   }
 
@@ -604,7 +639,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Classe para lidar com o timeout
 class TimeoutException implements Exception {
   final String message;
   TimeoutException(this.message);

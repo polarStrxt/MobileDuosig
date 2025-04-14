@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
-import 'package:flutter_docig_venda/services/apiDuplicata.dart'; // Para sincronização
-import 'package:flutter_docig_venda/services/dao/duplicata_dao.dart'; // DAO para acesso local
+import 'package:flutter_docig_venda/services/apiDuplicata.dart';
+import 'package:flutter_docig_venda/services/dao/duplicata_dao.dart';
 
 class DuplicataScreen extends StatefulWidget {
   final Duplicata duplicata;
@@ -19,14 +19,17 @@ class DuplicataScreen extends StatefulWidget {
 }
 
 class _DuplicataScreenState extends State<DuplicataScreen> {
+  // Constantes
+  final Color primaryColor = Color(0xFF5D5CDE);
+
+  // Estado
   bool _isLoading = false;
-  bool _isSyncing = false; // Flag para controlar estado de sincronização
+  bool _isSyncing = false;
   String? _errorMessage;
+  bool _usandoDadosExemplo = false;
+  List<Duplicata> _duplicatas = [];
 
-  // Lista de todas as duplicatas
-  List<Duplicata> _todasDuplicatas = [];
-
-  // Instância do DAO
+  // DAO
   final DuplicataDao _duplicataDao = DuplicataDao();
 
   @override
@@ -35,7 +38,8 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     _carregarDuplicatasLocal();
   }
 
-  // Método para carregar duplicatas do banco de dados local
+  // CARREGAMENTO DE DADOS
+
   Future<void> _carregarDuplicatasLocal() async {
     setState(() {
       _isLoading = true;
@@ -50,11 +54,9 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
       final int duplicatasCount = countResult.first['count'] as int;
 
       if (duplicatasCount == 0) {
-        // Se não houver duplicatas, atualizar estado e mostrar mensagem
         setState(() {
-          _todasDuplicatas = [];
+          _duplicatas = [];
           _isLoading = false;
-          _errorMessage = null;
         });
         return;
       }
@@ -64,19 +66,17 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
           await _duplicataDao.getDuplicatasByCliente(widget.duplicata.codcli);
 
       setState(() {
-        _todasDuplicatas = duplicatasDoCliente;
+        _duplicatas = duplicatasDoCliente;
         _isLoading = false;
       });
     } catch (e) {
-      print("❌ Erro ao buscar duplicatas locais: $e");
       setState(() {
-        _errorMessage = "Erro ao carregar duplicatas locais: $e";
+        _errorMessage = "Erro ao carregar duplicatas";
         _isLoading = false;
       });
     }
   }
 
-  // Método para sincronizar com a API
   Future<void> _sincronizarDuplicatas() async {
     setState(() {
       _isSyncing = true;
@@ -86,279 +86,245 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     try {
       // Buscar duplicatas da API
       List<Duplicata> duplicatasApi =
-          await DuplicataApi.buscarDuplicatasPorCliente(
-              widget.duplicata.codcli);
+          await DuplicataApi.buscarDuplicatas(usarDadosExemplo: true);
 
-      // Se não conseguir dados da API, manter os dados locais
       if (duplicatasApi.isEmpty) {
         setState(() {
           _isSyncing = false;
-          _errorMessage = "Não foi possível recuperar duplicatas da API";
+          _errorMessage = "Não foi possível recuperar duplicatas";
         });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Não foi possível recuperar duplicatas do servidor'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        _mostrarMensagem('Não foi possível recuperar duplicatas',
+            isError: true);
         return;
       }
 
-      // Salvar duplicatas no banco local
+      // Verificar se são dados de exemplo
+      bool dadosSaoExemplo =
+          duplicatasApi.any((d) => d.numdoc.startsWith("TESTE"));
+
+      // Salvar no banco local
       for (var duplicata in duplicatasApi) {
         await _duplicataDao.insertOrUpdate(duplicata.toJson(), 'numdoc');
       }
 
-      // Recarregar duplicatas locais
+      // Recarregar duplicatas do cliente atual
       List<Duplicata> duplicatasAtualizadas =
           await _duplicataDao.getDuplicatasByCliente(widget.duplicata.codcli);
 
       setState(() {
-        _todasDuplicatas = duplicatasAtualizadas;
+        _duplicatas = duplicatasAtualizadas;
         _isSyncing = false;
+        _usandoDadosExemplo = dadosSaoExemplo;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Duplicatas sincronizadas com sucesso!'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      _mostrarMensagem(
+          dadosSaoExemplo
+              ? 'Dados de exemplo carregados'
+              : 'Duplicatas sincronizadas',
+          isWarning: dadosSaoExemplo);
     } catch (e) {
-      print("❌ Erro na sincronização: $e");
       setState(() {
         _isSyncing = false;
-        _errorMessage = "Erro ao sincronizar: $e";
+        _errorMessage = "Erro na sincronização";
       });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao sincronizar duplicatas: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _mostrarMensagem('Erro ao sincronizar duplicatas', isError: true);
     }
   }
 
-  // Calcular valores totais
-  double get _valorTotal =>
-      _todasDuplicatas.fold(0, (sum, d) => sum + d.vlrdpl);
+  // CÁLCULOS E FORMATAÇÃO
 
-  double get _valorEmAberto => _todasDuplicatas
+  double get _valorTotal => _duplicatas.fold(0, (sum, d) => sum + d.vlrdpl);
+
+  double get _valorEmAberto => _duplicatas
       .where((d) => DateTime.parse(d.dtavct).isAfter(DateTime.now()))
       .fold(0, (sum, d) => sum + d.vlrdpl);
 
-  double get _valorVencido => _todasDuplicatas
+  double get _valorVencido => _duplicatas
       .where((d) => DateTime.parse(d.dtavct).isBefore(DateTime.now()))
       .fold(0, (sum, d) => sum + d.vlrdpl);
 
-  int get _quantidadeVencidas => _todasDuplicatas
+  int get _quantidadeVencidas => _duplicatas
       .where((d) => DateTime.parse(d.dtavct).isBefore(DateTime.now()))
       .length;
 
+  String _formatarValor(double valor) {
+    return "R\$ ${valor.toStringAsFixed(2).replaceAll('.', ',')}";
+  }
+
+  String _formatarData(String dateString) {
+    try {
+      final date = DateTime.parse(dateString);
+      return "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}";
+    } catch (e) {
+      return dateString;
+    }
+  }
+
+  // UTILIDADES DE UI
+
+  void _mostrarMensagem(String mensagem,
+      {bool isError = false, bool isWarning = false}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: isError
+            ? Colors.red[700]
+            : isWarning
+                ? Colors.orange[700]
+                : primaryColor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // CONSTRUÇÃO DA UI
+
   @override
   Widget build(BuildContext context) {
-    // Obter informações do cliente atual
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: _buildAppBar(),
+      body: _isLoading
+          ? _buildLoadingView()
+          : _errorMessage != null
+              ? _buildErrorView()
+              : _duplicatas.isEmpty
+                  ? _buildEmptyView()
+                  : _buildDuplicatasView(),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
     String nomeCliente =
         widget.cliente?.nomcli ?? "Cliente #${widget.duplicata.codcli}";
     String codigoCliente = widget.duplicata.codcli.toString();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Duplicatas"),
-        backgroundColor: Color(0xFF5D5CDE),
-        elevation: 0,
-        actions: [
-          // Botão de sincronização com a API
-          IconButton(
-            icon: _isSyncing
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
+    return AppBar(
+      title: Text("Duplicatas", style: TextStyle(fontWeight: FontWeight.w500)),
+      backgroundColor: primaryColor,
+      elevation: 0,
+      actions: [
+        // Botão de sincronização
+        IconButton(
+          icon: _isSyncing
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : Icon(Icons.sync),
+          onPressed: _isSyncing ? null : _sincronizarDuplicatas,
+          tooltip: "Sincronizar",
+        ),
+      ],
+      bottom: PreferredSize(
+        preferredSize: Size.fromHeight(_usandoDadosExemplo ? 72 : 52),
+        child: Column(
+          children: [
+            // Informações do cliente
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.white.withOpacity(0.1),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    nomeCliente,
+                    style: TextStyle(
                       color: Colors.white,
-                      strokeWidth: 2,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 16,
                     ),
-                  )
-                : Icon(Icons.sync),
-            onPressed: _isSyncing ? null : _sincronizarDuplicatas,
-            tooltip: "Sincronizar com a API",
-          ),
-          // Botão para recarregar dados locais
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _carregarDuplicatasLocal,
-            tooltip: "Atualizar duplicatas",
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: Size.fromHeight(60), // Cabeçalho do cliente
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            width: double.infinity,
-            color: Colors.white.withOpacity(0.1),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  nomeCliente,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    "Código: $codigoCliente",
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Aviso de dados de exemplo
+            if (_usandoDadosExemplo)
+              Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+                color: Colors.orange[700],
+                child: Text(
+                  "Exibindo dados de exemplo",
                   style: TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                SizedBox(height: 4),
-                Text(
-                  "Código: $codigoCliente",
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.8),
                     fontSize: 12,
+                    fontWeight: FontWeight.w500,
                   ),
+                  textAlign: TextAlign.center,
                 ),
-              ],
-            ),
-          ),
+              ),
+          ],
         ),
       ),
-      body: _isLoading
-          ? _buildLoadingState()
-          : _errorMessage != null
-              ? _buildErrorState()
-              : _todasDuplicatas.isEmpty
-                  ? _buildEmptyState()
-                  : _buildDuplicatasList(),
     );
   }
 
-  Widget _buildLoadingState() {
+  Widget _buildLoadingView() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+            ),
           ),
           SizedBox(height: 16),
           Text(
-            'Carregando duplicatas...',
-            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+            'Carregando duplicatas',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 16,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorView() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
             Icons.error_outline,
-            size: 70,
+            size: 48,
             color: Colors.red[300],
           ),
           SizedBox(height: 16),
           Text(
-            "Erro ao carregar duplicatas",
+            "Não foi possível carregar as duplicatas",
             style: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[800],
             ),
             textAlign: TextAlign.center,
-          ),
-          SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              _errorMessage ?? "Ocorreu um erro desconhecido.",
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton.icon(
-                icon: Icon(Icons.refresh),
-                label: Text("Tentar novamente"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Color(0xFF5D5CDE),
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: _carregarDuplicatasLocal,
-              ),
-              SizedBox(width: 12),
-              ElevatedButton.icon(
-                icon: Icon(Icons.sync),
-                label: Text("Sincronizar"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: _sincronizarDuplicatas,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.receipt_long,
-            size: 70,
-            color: Colors.grey[400],
-          ),
-          SizedBox(height: 16),
-          Text(
-            "Nenhuma duplicata encontrada",
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[700],
-            ),
-            textAlign: TextAlign.center,
-          ),
-          SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 40),
-            child: Text(
-              "Não foram encontradas duplicatas para este cliente no banco local.",
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-              textAlign: TextAlign.center,
-            ),
           ),
           SizedBox(height: 24),
-          ElevatedButton.icon(
+          OutlinedButton.icon(
             icon: Icon(Icons.sync),
-            label: Text("Sincronizar com API"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFF5D5CDE),
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
-            ),
+            label: Text("Sincronizar"),
             onPressed: _sincronizarDuplicatas,
           ),
         ],
@@ -366,25 +332,59 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     );
   }
 
-  Widget _buildDuplicatasList() {
+  Widget _buildEmptyView() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.receipt_long,
+            size: 48,
+            color: Colors.grey[400],
+          ),
+          SizedBox(height: 16),
+          Text(
+            "Nenhuma duplicata encontrada",
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[800],
+            ),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 8),
+          Text(
+            "Sincronize para carregar as duplicatas",
+            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+            textAlign: TextAlign.center,
+          ),
+          SizedBox(height: 24),
+          OutlinedButton.icon(
+            icon: Icon(Icons.sync),
+            label: Text("Sincronizar"),
+            onPressed: _sincronizarDuplicatas,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDuplicatasView() {
     return Column(
       children: [
         // Resumo das duplicatas
-        _buildResumoDuplicatas(),
+        _buildResumoFinanceiro(),
 
         // Lista de duplicatas
         Expanded(
           child: RefreshIndicator(
             onRefresh: _carregarDuplicatasLocal,
-            color: Color(0xFF5D5CDE),
+            color: primaryColor,
             child: ListView.builder(
-              itemCount: _todasDuplicatas.length,
+              itemCount: _duplicatas.length,
               padding: EdgeInsets.all(16),
               itemBuilder: (context, index) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _buildDuplicataCard(_todasDuplicatas[index]),
-                );
+                return _buildItemDuplicata(_duplicatas[index]);
               },
             ),
           ),
@@ -393,137 +393,10 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     );
   }
 
-  Widget _buildDuplicataCard(Duplicata duplicata) {
-    // Determina se a duplicata está vencida
-    bool isVencida = DateTime.parse(duplicata.dtavct).isBefore(DateTime.now());
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Duplicata: ${duplicata.numdoc}",
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-                Container(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: isVencida
-                        ? Colors.red.withOpacity(0.1)
-                        : Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isVencida
-                          ? Colors.red.withOpacity(0.3)
-                          : Colors.blue.withOpacity(0.3),
-                    ),
-                  ),
-                  child: Text(
-                    isVencida ? "Vencida" : "Em Aberto",
-                    style: TextStyle(
-                      color: isVencida ? Colors.red : Colors.blue,
-                      fontWeight: FontWeight.w500,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Vencimento",
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 12,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        _formatDate(duplicata.dtavct),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Valor",
-                        style: TextStyle(
-                          color: Colors.grey[600],
-                          fontSize: 12,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        "R\$ ${duplicata.vlrdpl.toStringAsFixed(2).replaceAll('.', ',')}",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          color:
-                              isVencida ? Colors.red[700] : Colors.green[700],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _formatDate(String dateString) {
-    try {
-      final date = DateTime.parse(dateString);
-      return "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}";
-    } catch (e) {
-      return dateString; // Retorna a string original se não conseguir formatar
-    }
-  }
-
-  Widget _buildResumoDuplicatas() {
+  Widget _buildResumoFinanceiro() {
     return Container(
       padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          bottomLeft: Radius.circular(16),
-          bottomRight: Radius.circular(16),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: Offset(0, 5),
-          ),
-        ],
-      ),
+      color: Colors.white,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -533,42 +406,36 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
               Text(
                 "Resumo Financeiro",
                 style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF5D5CDE),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[800],
                 ),
               ),
-              // Usando _quantidadeVencidas para resolver o warning amarelo
               if (_quantidadeVencidas > 0)
                 Container(
-                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.red.withOpacity(0.3)),
+                    color: Colors.red[50],
+                    border: Border.all(color: Colors.red[100]!),
+                    borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
-                    "${_quantidadeVencidas} ${_quantidadeVencidas == 1 ? 'vencida' : 'vencidas'}",
+                    "${_quantidadeVencidas} vencida${_quantidadeVencidas > 1 ? 's' : ''}",
                     style: TextStyle(
                       color: Colors.red[700],
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w500,
                       fontSize: 12,
                     ),
                   ),
                 ),
             ],
           ),
-          SizedBox(height: 12),
+          SizedBox(height: 16),
           Row(
             children: [
-              _buildResumoCaixaValor("Total", _valorTotal, Colors.blue[700]!,
-                  Icons.account_balance_wallet),
-              SizedBox(width: 8),
-              _buildResumoCaixaValor("Em Aberto", _valorEmAberto,
-                  Colors.green[700]!, Icons.pending_actions),
-              SizedBox(width: 8),
-              _buildResumoCaixaValor(
-                  "Vencido", _valorVencido, Colors.red[700]!, Icons.warning),
+              _buildResumoValor("Total", _valorTotal, Colors.grey[800]!),
+              _buildResumoValor("Em Aberto", _valorEmAberto, Colors.blue[700]!),
+              _buildResumoValor("Vencido", _valorVencido, Colors.red[700]!),
             ],
           ),
         ],
@@ -576,43 +443,142 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     );
   }
 
-  Widget _buildResumoCaixaValor(
-      String titulo, double valor, Color cor, IconData icone) {
+  Widget _buildResumoValor(String titulo, double valor, Color cor) {
     return Expanded(
-      child: Container(
-        padding: EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: cor.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: cor.withOpacity(0.3)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            titulo,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 4),
+          Text(
+            _formatarValor(valor),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: cor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemDuplicata(Duplicata duplicata) {
+    bool isVencida = DateTime.parse(duplicata.dtavct).isBefore(DateTime.now());
+    bool isDadoExemplo = duplicata.numdoc.startsWith("TESTE");
+
+    return Container(
+      margin: EdgeInsets.only(bottom: 8),
+      child: Card(
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+          side: BorderSide(color: Colors.grey[200]!),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icone, size: 14, color: cor),
-                SizedBox(width: 4),
-                Text(
-                  titulo,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: cor,
-                    fontWeight: FontWeight.w500,
+        child: Padding(
+          padding: EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        duplicata.numdoc,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 15,
+                        ),
+                      ),
+                      if (isDadoExemplo)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(
+                            Icons.info_outline,
+                            size: 14,
+                            color: Colors.orange[700],
+                          ),
+                        ),
+                    ],
                   ),
-                ),
-              ],
-            ),
-            SizedBox(height: 4),
-            Text(
-              "R\$ ${valor.toStringAsFixed(2).replaceAll('.', ',')}",
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: cor,
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isVencida ? Colors.red[50] : Colors.blue[50],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      isVencida ? "Vencida" : "Em Aberto",
+                      style: TextStyle(
+                        color: isVencida ? Colors.red[700] : Colors.blue[700],
+                        fontWeight: FontWeight.w500,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
+              SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Vencimento",
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          _formatarData(duplicata.dtavct),
+                          style: TextStyle(
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Valor",
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          _formatarValor(duplicata.vlrdpl),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                            color:
+                                isVencida ? Colors.red[700] : Colors.grey[800],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -6,34 +6,59 @@ class ProdutoDao extends BaseDao<Produto> {
 
   @override
   Future<List<Produto>> getAll(Function fromJson) async {
-    return super.getAll((json) => Produto.fromJson(json));
+    try {
+      return await super.getAll((json) => Produto.fromJson(json));
+    } catch (e) {
+      print("❌ Erro ao buscar todos os produtos: $e");
+      return [];
+    }
   }
 
-  // Método de conveniência
+  // Buscar todos os produtos
   Future<List<Produto>> getAllProdutos() async {
-    return getAll((json) => Produto.fromJson(json));
+    return await getAll((json) => Produto.fromJson(json));
   }
 
-  // Método para buscar um produto pelo código
-  Future<Produto?> getProdutoByCodigo(String codigo) async {
-    return getById('codprd', codigo, (json) => Produto.fromJson(json));
+  // Buscar um produto pelo código
+  Future<Produto?> getProdutoByCodigo(int codigo) async {
+    try {
+      return await getById('codprd', codigo, (json) => Produto.fromJson(json));
+    } catch (e) {
+      print("❌ Erro ao buscar produto pelo código ($codigo): $e");
+      return null;
+    }
   }
 
-  // Método para salvar um produto
+  // Salvar ou atualizar um produto
   Future<int> save(Produto produto) async {
-    return insertOrUpdate(produto.toJson(), 'codprd');
+    try {
+      return await insertOrUpdate(produto.toJson(), 'codprd');
+    } catch (e) {
+      print("❌ Erro ao salvar o produto: $e");
+      return -1; // Retorna -1 para indicar falha
+    }
   }
 
-  // Método para contar registros
+  // Contar número de produtos
   Future<int> count() async {
-    final db = await database;
-    List<Map<String, dynamic>> result =
-        await db.rawQuery('SELECT COUNT(*) as count FROM $tableName');
-    return result.first['count'] as int;
+    try {
+      final db = await database;
+      List<Map<String, dynamic>> result =
+          await db.rawQuery('SELECT COUNT(*) as count FROM $tableName');
+      return (result.first['count'] ?? 0) as int;
+    } catch (e) {
+      print("❌ Erro ao contar produtos: $e");
+      return 0;
+    }
   }
 
-  // Método para excluir todos os registros
+  // Excluir todos os produtos
   Future<int> deleteAll() async {
-    return await clearTable();
+    try {
+      return await clearTable();
+    } catch (e) {
+      print("❌ Erro ao excluir todos os produtos: $e");
+      return 0;
+    }
   }
 }

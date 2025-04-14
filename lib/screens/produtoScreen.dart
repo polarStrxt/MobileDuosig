@@ -4,307 +4,413 @@ import 'package:flutter_docig_venda/services/apiProduto.dart';
 import 'package:flutter_docig_venda/widgets/cardProdutos.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/screens/carrinhoScreen.dart';
-import 'package:flutter_docig_venda/widgets/carrinhoWidget.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/services/dao/produto_dao.dart'; // Importação do DAO
+import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
+import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
+import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
 
 class ProdutoScreen extends StatefulWidget {
-  final Cliente? cliente; // Cliente atual para filtrar produtos específicos
+  final Cliente? cliente;
 
-  const ProdutoScreen({Key? key, this.cliente}) : super(key: key);
+  const ProdutoScreen({super.key, this.cliente});
 
   @override
-  _ProdutoScreenState createState() => _ProdutoScreenState();
+  State<ProdutoScreen> createState() => _ProdutoScreenState();
 }
 
 class _ProdutoScreenState extends State<ProdutoScreen> {
-  final TextEditingController searchController = TextEditingController();
-  final FocusNode searchFocus = FocusNode();
-  List<Produto> produtos = [];
-  List<Produto> produtosFiltrados = [];
-  final Carrinho carrinho = Carrinho();
-  bool isLoading = true;
-  bool isSearching = false;
-  bool isSyncing = false;
-  String? errorMessage;
+  // Constantes
+  final Color primaryColor = Color(0xFF5D5CDE);
 
-  // Instância do DAO de produtos
-  final ProdutoDao _produtoDao = ProdutoDao();
-
-  // Controlador para atualização por scroll
+  // Controllers
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   final ScrollController _scrollController = ScrollController();
+
+  // Estado
+  List<Produto> _produtos = [];
+  List<Produto> _produtosFiltrados = [];
+  final Carrinho _carrinho = Carrinho();
+  Map<Produto, double> _descontos = {};
+  bool _isLoading = true;
+  bool _isSearching = false;
+  bool _isSyncing = false;
+  String? _errorMessage;
+
+  // DAOs
+  final ProdutoDao _produtoDao = ProdutoDao();
+  final CarrinhoDao _carrinhoDao = CarrinhoDao();
 
   @override
   void initState() {
     super.initState();
-    carregarProdutosDoDb();
+    _inicializarDados();
+    _configurarListeners();
+  }
 
-    // Limpar pesquisa quando o usuário digitar
-    searchController.addListener(() {
+  void _inicializarDados() {
+    _carregarProdutosDoDb();
+    _verificarCarrinhoExistente();
+  }
+
+  void _configurarListeners() {
+    _searchController.addListener(() {
       setState(() {
-        isSearching = searchController.text.isNotEmpty;
+        _isSearching = _searchController.text.isNotEmpty;
       });
     });
   }
 
   @override
   void dispose() {
-    searchController.dispose();
-    searchFocus.dispose();
+    _searchController.dispose();
+    _searchFocus.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  // Método para carregar produtos do banco de dados local
-  Future<void> carregarProdutosDoDb() async {
+  // CARREGAMENTO DE DADOS
+
+  Future<void> _verificarCarrinhoExistente() async {
+    if (widget.cliente == null) return;
+
+    try {
+      final itensCarrinho =
+          await _carrinhoDao.getItensCliente(widget.cliente!.codcli);
+
+      if (itensCarrinho.isEmpty || !mounted) return;
+
+      final deveRecuperar = await _perguntarRecuperarCarrinho();
+      if (deveRecuperar != true) return;
+
+      await _recuperarCarrinho(itensCarrinho);
+    } catch (e) {
+      debugPrint('❌ Erro ao verificar carrinho existente: $e');
+    }
+  }
+
+  Future<bool?> _perguntarRecuperarCarrinho() {
+    return showDialog<bool>(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        elevation: 2,
+        child: Container(
+          padding: EdgeInsets.all(20),
+          constraints: BoxConstraints(maxWidth: 320),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.shopping_cart, color: primaryColor, size: 20),
+                  SizedBox(width: 8),
+                  Text(
+                    "Carrinho Pendente",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 16),
+              Text(
+                "Encontramos um carrinho não finalizado para ${widget.cliente!.nomcli}.",
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[800],
+                ),
+              ),
+              SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    style: TextButton.styleFrom(
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      foregroundColor: Colors.grey[700],
+                    ),
+                    child: Text("IGNORAR"),
+                  ),
+                  SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primaryColor,
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      elevation: 0,
+                    ),
+                    child: Text("RECUPERAR"),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _recuperarCarrinho(List<CarrinhoItem> itensCarrinho) async {
+    _carrinho.itens.clear();
+    _descontos.clear();
+
+    for (var item in itensCarrinho) {
+      Produto? produto = await _buscarProdutoPeloCodigo(item.codprd);
+      if (produto != null) {
+        _carrinho.itens[produto] = item.quantidade;
+        if (item.desconto > 0) {
+          _descontos[produto] = item.desconto * 100;
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() {});
+
+    _mostrarMensagem(
+        "Carrinho recuperado com sucesso! (${itensCarrinho.length} itens)",
+        cor: Colors.green[700]);
+  }
+
+  Future<Produto?> _buscarProdutoPeloCodigo(int codprd) async {
+    try {
+      return await _produtoDao.getProdutoByCodigo(codprd);
+    } catch (e) {
+      debugPrint('❌ Erro ao buscar produto $codprd: $e');
+      return null;
+    }
+  }
+
+  Future<void> _carregarProdutosDoDb() async {
     setState(() {
-      isLoading = true;
-      errorMessage = null;
+      _isLoading = true;
+      _errorMessage = null;
     });
 
     try {
-      // Buscar o total de produtos no banco de dados
       final db = await _produtoDao.database;
       List<Map<String, dynamic>> countResult = await db
           .rawQuery('SELECT COUNT(*) as count FROM ${_produtoDao.tableName}');
       final int produtosCount = countResult.first['count'] as int;
 
-      // Se não tiver produtos, tentar carregar da API
       if (produtosCount == 0) {
         setState(() {
-          errorMessage = 'Não há produtos no banco de dados local.';
-          isLoading = false;
+          _errorMessage = 'Não há produtos no banco de dados local.';
+          _isLoading = false;
         });
         return;
       }
 
-      // Buscar todos os produtos do banco de dados
       List<Produto> lista =
           await _produtoDao.getAll((json) => Produto.fromJson(json));
 
       setState(() {
-        produtos = lista;
-        produtosFiltrados = lista;
-        isLoading = false;
+        _produtos = lista;
+        _produtosFiltrados = lista;
+        _isLoading = false;
       });
     } catch (e) {
-      print("❌ Erro ao buscar produtos do banco de dados: $e");
+      debugPrint("❌ Erro ao buscar produtos do banco de dados: $e");
       setState(() {
-        isLoading = false;
-        errorMessage = e.toString();
+        _isLoading = false;
+        _errorMessage = e.toString();
       });
     }
   }
 
-  // Método para sincronizar produtos com a API e atualizar o banco de dados
-  Future<void> sincronizarProdutos() async {
+  Future<void> _sincronizarProdutos() async {
     setState(() {
-      isSyncing = true;
-      errorMessage = null;
+      _isSyncing = true;
+      _errorMessage = null;
     });
 
     try {
-      // Buscar produtos da API
       List<Produto> produtosApi = await ProdutoService.buscarProdutos();
-
-      // Limpar a tabela de produtos
       await _produtoDao.clearTable();
 
-      // Inserir os novos produtos no banco de dados
       for (var produto in produtosApi) {
         await _produtoDao.insertOrUpdate(produto.toJson(), 'codprd');
       }
 
-      // Carregar os produtos atualizados
       List<Produto> lista =
           await _produtoDao.getAll((json) => Produto.fromJson(json));
 
       setState(() {
-        produtos = lista;
-        produtosFiltrados = lista;
-        isSyncing = false;
+        _produtos = lista;
+        _produtosFiltrados = lista;
+        _isSyncing = false;
       });
 
-      // Mostrar mensagem de sucesso
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content:
-              Text('${produtosApi.length} produtos sincronizados com sucesso!'),
-          backgroundColor: Colors.green[600],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (!mounted) return;
+
+      _mostrarMensagem(
+          '${produtosApi.length} produtos sincronizados com sucesso!',
+          cor: Colors.green[700]);
     } catch (e) {
-      print("❌ Erro ao sincronizar produtos: $e");
+      debugPrint("❌ Erro ao sincronizar produtos: $e");
+
       setState(() {
-        isSyncing = false;
-        errorMessage = 'Erro na sincronização: ${e.toString()}';
+        _isSyncing = false;
+        _errorMessage = 'Erro na sincronização: ${e.toString()}';
       });
 
-      // Mostrar mensagem de erro
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao sincronizar: ${e.toString()}'),
-          backgroundColor: Colors.red[600],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (!mounted) return;
+
+      _mostrarMensagem('Erro ao sincronizar: ${e.toString()}',
+          cor: Colors.red[700]);
     }
   }
 
-  // Restante do código permanece igual...
-  void filtrarProdutos(String query) {
+  // GESTÃO DO CARRINHO
+
+  Future<void> _adicionarProdutoAoCarrinho(
+      Produto produto, int quantidade, double desconto) async {
+    _carrinho.itens[produto] = quantidade;
+
+    if (desconto > 0) {
+      _descontos[produto] = desconto;
+    }
+
+    if (widget.cliente == null) {
+      debugPrint('⚠️ Tentativa de adicionar ao carrinho sem cliente definido');
+      return;
+    }
+
+    try {
+      final carrinhoItem = CarrinhoItem(
+        codprd: produto.codprd,
+        codcli: widget.cliente!.codcli,
+        quantidade: quantidade,
+        desconto: desconto / 100,
+        finalizado: 0,
+        dataCriacao: DateTime.now(),
+      );
+
+      await _carrinhoDao.salvarItem(carrinhoItem);
+      debugPrint('✅ Produto ${produto.codprd} adicionado ao carrinho');
+    } catch (e) {
+      debugPrint('❌ Erro ao salvar produto no carrinho: $e');
+      if (mounted) {
+        _mostrarMensagem('Erro ao salvar produto no carrinho',
+            cor: Colors.red[700]);
+      }
+    }
+
+    setState(() {});
+  }
+
+  void _irParaCarrinho() {
+    final int totalItens = _carrinho.quantidadeTotal;
+
+    if (totalItens == 0) {
+      _mostrarMensagem(
+          'O carrinho está vazio. Adicione produtos para continuar.',
+          cor: Colors.grey[800]);
+      return;
+    }
+
+    if (widget.cliente == null) {
+      _mostrarMensagem('Selecione um cliente antes de visualizar o carrinho.',
+          cor: Colors.red[700]);
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CarrinhoScreen(
+          cliente: widget.cliente,
+          codcli: widget.cliente!.codcli,
+        ),
+      ),
+    ).then((_) {
+      setState(() {});
+      _verificarCarrinhoExistente();
+    });
+  }
+
+  // PESQUISA E FILTRAGEM
+
+  void _filtrarProdutos(String query) {
     final String termoBusca = query.toLowerCase().trim();
 
     setState(() {
       if (termoBusca.isEmpty) {
-        produtosFiltrados = produtos;
+        _produtosFiltrados = _produtos;
       } else {
-        produtosFiltrados = produtos.where((produto) {
-          return produto.dcrprd.toLowerCase().contains(termoBusca) ||
-              produto.codprd.toString().contains(termoBusca) ||
-              produto.nommrc.toLowerCase().contains(termoBusca);
+        _produtosFiltrados = _produtos.where((produto) {
+          final codigoProduto = produto.codprd.toString().toLowerCase();
+          if (codigoProduto.startsWith(termoBusca)) {
+            return true;
+          }
+
+          final palavrasDescricao = produto.dcrprd.toLowerCase().split(' ');
+          for (var palavra in palavrasDescricao) {
+            if (palavra.trim().startsWith(termoBusca)) {
+              return true;
+            }
+          }
+
+          final palavrasMarca = produto.nommrc.toLowerCase().split(' ');
+          for (var palavra in palavrasMarca) {
+            if (palavra.trim().startsWith(termoBusca)) {
+              return true;
+            }
+          }
+
+          return false;
         }).toList();
       }
     });
   }
 
-  void limparPesquisa() {
-    searchController.clear();
+  void _limparPesquisa() {
+    _searchController.clear();
     setState(() {
-      produtosFiltrados = produtos;
-      isSearching = false;
+      _produtosFiltrados = _produtos;
+      _isSearching = false;
     });
-    searchFocus.unfocus();
+    _searchFocus.unfocus();
   }
+
+  // UTILIDADES DE UI
+
+  void _mostrarMensagem(String mensagem, {Color? cor}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: cor,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  // CONSTRUÇÃO DA UI
 
   @override
   Widget build(BuildContext context) {
-    // Restante do código permanece igual...
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        backgroundColor: Color(0xFF5D5CDE),
-        elevation: 0,
-        title: widget.cliente != null
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Produtos",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    "Cliente: ${widget.cliente!.nomcli}",
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.normal,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              )
-            : Text("Catálogo de Produtos"),
-        actions: [
-          // Botão para sincronizar produtos com a API
-          IconButton(
-            icon: isSyncing
-                ? SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ))
-                : Icon(Icons.sync),
-            tooltip: 'Sincronizar com API',
-            onPressed: isSyncing ? null : sincronizarProdutos,
-          ),
-          // Botão para recarregar produtos do banco de dados
-          IconButton(
-            icon: Icon(Icons.refresh),
-            tooltip: 'Atualizar produtos',
-            onPressed: carregarProdutosDoDb,
-          ),
-        ],
-      ),
+      backgroundColor: Colors.white,
+      appBar: _buildAppBar(),
       body: Column(
         children: [
-          // Barra de pesquisa com estilo melhorado
-          Container(
-            color: Color(0xFF5D5CDE),
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(30),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 8,
-                    offset: Offset(0, 3),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: searchController,
-                focusNode: searchFocus,
-                onChanged: filtrarProdutos,
-                decoration: InputDecoration(
-                  hintText: "Pesquisar produto por nome, código ou marca...",
-                  prefixIcon: Icon(Icons.search, color: Color(0xFF5D5CDE)),
-                  suffixIcon: isSearching
-                      ? IconButton(
-                          icon: Icon(Icons.clear, color: Colors.grey),
-                          onPressed: limparPesquisa,
-                        )
-                      : null,
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(vertical: 15),
-                ),
-              ),
-            ),
-          ),
-
-          // Informações da tabela de preço e contagem de produtos
-          Container(
-            color: Colors.grey[100],
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Row(
-              children: [
-                if (widget.cliente != null) ...[
-                  Icon(Icons.list_alt, size: 16, color: Colors.grey[700]),
-                  SizedBox(width: 8),
-                  Text(
-                    "Tabela: ${widget.cliente!.codtab}",
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                  SizedBox(width: 16),
-                ],
-                Icon(Icons.inventory_2, size: 16, color: Colors.grey[700]),
-                SizedBox(width: 8),
-                Text(
-                  "${produtosFiltrados.length}/${produtos.length} produtos",
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[700],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Conteúdo principal
+          _buildSearchBar(),
+          _buildInfoBar(),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: carregarProdutosDoDb,
-              color: Color(0xFF5D5CDE),
+              onRefresh: _carregarProdutosDoDb,
+              color: primaryColor,
               child: _buildMainContent(),
             ),
           ),
@@ -314,17 +420,137 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
     );
   }
 
-  // Os métodos abaixo permanecem inalterados...
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      backgroundColor: primaryColor,
+      elevation: 0,
+      titleSpacing: 16,
+      title: widget.cliente != null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Produtos",
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Text(
+                  "Cliente: ${widget.cliente!.nomcli}",
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.normal,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            )
+          : Text(
+              "Catálogo de Produtos",
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+      actions: [
+        IconButton(
+          icon: _isSyncing
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ))
+              : Icon(Icons.sync, size: 22),
+          tooltip: 'Sincronizar',
+          onPressed: _isSyncing ? null : _sincronizarProdutos,
+        ),
+        IconButton(
+          icon: Icon(Icons.refresh, size: 22),
+          tooltip: 'Atualizar',
+          onPressed: _carregarProdutosDoDb,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      color: primaryColor,
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.white),
+        ),
+        child: TextField(
+          controller: _searchController,
+          focusNode: _searchFocus,
+          onChanged: _filtrarProdutos,
+          decoration: InputDecoration(
+            hintText: "Pesquisar produto...",
+            hintStyle: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            prefixIcon: Icon(Icons.search, color: primaryColor, size: 20),
+            suffixIcon: _isSearching
+                ? IconButton(
+                    icon: Icon(Icons.clear, color: Colors.grey[400], size: 18),
+                    onPressed: _limparPesquisa,
+                  )
+                : null,
+            border: InputBorder.none,
+            contentPadding: EdgeInsets.symmetric(vertical: 12),
+          ),
+          style: TextStyle(fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoBar() {
+    return Container(
+      color: Colors.grey[100],
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          if (widget.cliente != null) ...[
+            Icon(Icons.list_alt, size: 14, color: Colors.grey[700]),
+            SizedBox(width: 6),
+            Text(
+              "Tabela: ${widget.cliente!.codtab}",
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[700],
+              ),
+            ),
+            SizedBox(width: 16),
+          ],
+          Icon(Icons.inventory_2, size: 14, color: Colors.grey[700]),
+          SizedBox(width: 6),
+          Text(
+            "${_produtosFiltrados.length}/${_produtos.length} produtos",
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey[700],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMainContent() {
-    if (isLoading) {
+    if (_isLoading) {
       return _buildLoadingState();
     }
 
-    if (errorMessage != null) {
+    if (_errorMessage != null) {
       return _buildErrorState();
     }
 
-    if (produtosFiltrados.isEmpty) {
+    if (_produtosFiltrados.isEmpty) {
       return _buildEmptyState();
     }
 
@@ -336,13 +562,22 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+            ),
           ),
           SizedBox(height: 16),
           Text(
-            'Carregando produtos...',
-            style: TextStyle(color: Colors.grey[600], fontSize: 16),
+            'Carregando produtos',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),
@@ -351,53 +586,33 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
 
   Widget _buildErrorState() {
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, color: Colors.red[400], size: 60),
+            Icon(Icons.error_outline, color: Colors.red[400], size: 48),
             SizedBox(height: 16),
             Text(
-              'Erro ao carregar produtos',
+              'Não foi possível carregar os produtos',
               style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.red[700],
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[800],
               ),
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 8),
             Text(
-              errorMessage ?? 'Ocorreu um erro desconhecido.',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              _errorMessage ?? 'Ocorreu um erro desconhecido.',
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 24),
-            // Botão para sincronizar (se não há produtos no banco de dados)
-            ElevatedButton.icon(
+            OutlinedButton.icon(
               icon: Icon(Icons.sync),
-              label: Text('Sincronizar produtos'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF5D5CDE),
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-              ),
-              onPressed: sincronizarProdutos,
-            ),
-            SizedBox(height: 12),
-            // Botão para recarregar do banco de dados
-            TextButton.icon(
-              icon: Icon(Icons.refresh),
-              label: Text('Verificar banco de dados'),
-              style: TextButton.styleFrom(
-                foregroundColor: Color(0xFF5D5CDE),
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              ),
-              onPressed: carregarProdutosDoDb,
+              label: Text('Sincronizar'),
+              onPressed: _sincronizarProdutos,
             ),
           ],
         ),
@@ -412,62 +627,38 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
       children: [
         SizedBox(height: 40),
         Icon(
-          isSearching ? Icons.search_off : Icons.inventory,
-          size: 70,
+          _isSearching ? Icons.search_off : Icons.inventory,
+          size: 48,
           color: Colors.grey[400],
         ),
         SizedBox(height: 16),
         Text(
-          isSearching
+          _isSearching
               ? 'Nenhum produto encontrado'
               : 'Nenhum produto disponível',
           style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey[700],
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey[800],
           ),
           textAlign: TextAlign.center,
         ),
         SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 40),
-          child: Text(
-            isSearching
-                ? 'Não encontramos produtos com os termos da sua pesquisa.'
-                : 'Não há produtos disponíveis no banco de dados local.',
-            style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            textAlign: TextAlign.center,
-          ),
+        Text(
+          _isSearching
+              ? 'Não encontramos produtos com os termos da sua pesquisa.'
+              : 'Não há produtos disponíveis no banco de dados local.',
+          style: TextStyle(color: Colors.grey[600], fontSize: 13),
+          textAlign: TextAlign.center,
         ),
         SizedBox(height: 24),
-        if (isSearching)
-          Center(
-            child: TextButton.icon(
-              icon: Icon(Icons.clear),
-              label: Text('Limpar pesquisa'),
-              style: TextButton.styleFrom(
-                foregroundColor: Color(0xFF5D5CDE),
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              ),
-              onPressed: limparPesquisa,
-            ),
-          )
-        else
-          Center(
-            child: ElevatedButton.icon(
-              icon: Icon(Icons.sync),
-              label: Text('Sincronizar com a API'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF5D5CDE),
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-              ),
-              onPressed: sincronizarProdutos,
-            ),
+        Center(
+          child: OutlinedButton.icon(
+            icon: Icon(_isSearching ? Icons.clear : Icons.sync),
+            label: Text(_isSearching ? 'Limpar pesquisa' : 'Sincronizar'),
+            onPressed: _isSearching ? _limparPesquisa : _sincronizarProdutos,
           ),
+        ),
       ],
     );
   }
@@ -479,18 +670,19 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
       physics: AlwaysScrollableScrollPhysics(),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        childAspectRatio: 0.8, // Aumentado para evitar overflow
+        childAspectRatio: 0.8,
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
       ),
-      itemCount: produtosFiltrados.length,
+      itemCount: _produtosFiltrados.length,
       itemBuilder: (context, index) {
-        Produto produto = produtosFiltrados[index];
+        Produto produto = _produtosFiltrados[index];
         return ProdutoDetalhe(
           produto: produto,
-          carrinho: carrinho,
-          onAddToCart: () {
-            setState(() {}); // Atualiza a UI quando adicionar ao carrinho
+          carrinho: _carrinho,
+          onAddToCart: (quantidade, desconto) async {
+            await _adicionarProdutoAoCarrinho(produto, quantidade, desconto);
+            setState(() {});
           },
           clienteTabela: widget.cliente?.codtab ?? 1,
         );
@@ -499,67 +691,35 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   }
 
   Widget _buildCartFAB() {
-    final int totalItens = carrinho.quantidadeTotal;
+    final int totalItens = _carrinho.quantidadeTotal;
 
     return FloatingActionButton.extended(
-      onPressed: () {
-        // Verifica se há itens no carrinho
-        if (totalItens == 0) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                  'O carrinho está vazio. Adicione produtos para continuar.'),
-              backgroundColor: Colors.grey[800],
-              duration: Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-          return;
-        }
-
-        // Cria o CarrinhoWidget e navega para a tela
-// No método _buildCartFAB() do ProdutoScreen
-        final CarrinhoWidget carrinhoWidget = CarrinhoWidget(
-          itens: carrinho.itens,
-          cliente: widget.cliente,
-          descontos: carrinho.descontos, // Adicionando os descontos aqui
-        );
-
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => CarrinhoScreen(carrinho: carrinhoWidget),
-          ),
-        ).then((_) {
-          // Atualiza a UI quando retornar do carrinho
-          setState(() {});
-        });
-      },
-      backgroundColor: Color(0xFF5D5CDE),
+      onPressed: _irParaCarrinho,
+      backgroundColor: primaryColor,
       icon: Stack(
         alignment: Alignment.center,
         children: [
-          Icon(Icons.shopping_cart, color: Colors.white),
+          Icon(Icons.shopping_cart, color: Colors.white, size: 20),
           if (totalItens > 0)
             Positioned(
               right: -5,
               top: -5,
               child: Container(
-                padding: EdgeInsets.all(4),
+                padding: EdgeInsets.all(2),
                 decoration: BoxDecoration(
                   color: Colors.red,
                   shape: BoxShape.circle,
                 ),
                 constraints: BoxConstraints(
-                  minWidth: 18,
-                  minHeight: 18,
+                  minWidth: 16,
+                  minHeight: 16,
                 ),
                 child: Text(
                   '$totalItens',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 10,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w500,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -568,10 +728,14 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
         ],
       ),
       label: Text(
-        "Ver carrinho",
-        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        "Carrinho",
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w500,
+          fontSize: 14,
+        ),
       ),
-      elevation: 4,
+      elevation: 2,
     );
   }
 }

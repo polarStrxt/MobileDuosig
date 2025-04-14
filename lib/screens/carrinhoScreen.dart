@@ -1,62 +1,377 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/widgets/carrinhoWidget.dart';
-import 'package:flutter_docig_venda/widgets/pdfGenerator.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
+import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
+import 'package:flutter_docig_venda/widgets/pdfGenerator.dart';
 import 'package:flutter_docig_venda/widgets/gerarpdfsimples.dart';
+import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
+import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+
+/// Modelo para condição de pagamento
+class CondicaoPagamento {
+  final int codcndpgt;
+  final String dcrcndpgt;
+  final double perdsccel;
+  final String staati;
+
+  CondicaoPagamento({
+    required this.codcndpgt,
+    required this.dcrcndpgt,
+    required this.perdsccel,
+    required this.staati,
+  });
+
+  factory CondicaoPagamento.fromJson(Map<String, dynamic> json) {
+    return CondicaoPagamento(
+      codcndpgt: json['codcndpgt'],
+      dcrcndpgt: json['dcrcndpgt'],
+      perdsccel: json['perdsccel'].toDouble(),
+      staati: json['staati'],
+    );
+  }
+}
 
 class CarrinhoScreen extends StatefulWidget {
-  final CarrinhoWidget carrinho;
+  final Cliente? cliente;
+  final int codcli;
 
-  const CarrinhoScreen({Key? key, required this.carrinho}) : super(key: key);
+  const CarrinhoScreen({
+    super.key,
+    this.cliente,
+    required this.codcli,
+  });
 
   @override
-  _CarrinhoScreenState createState() => _CarrinhoScreenState();
+  State<CarrinhoScreen> createState() => _CarrinhoScreenState();
 }
 
 class _CarrinhoScreenState extends State<CarrinhoScreen> {
-  // Mapa local para gerenciar os descontos (inicializado a partir do carrinho)
-  late Map<Produto, double> _descontos;
+  // Mapa para gerenciar os itens com produtos como chaves
+  late Map<Produto, int> _produtosMap = {};
+
+  // Mapa local para gerenciar os descontos
+  late Map<Produto, double> _descontos = {};
+
+  // Lista de itens do carrinho
+  late List<CarrinhoItem> _itensCarrinho = [];
+
+  // Lista de condições de pagamento
+  late List<CondicaoPagamento> _condicoesPagamento = [];
+
+  // DAOs para acesso ao banco de dados
+  final CarrinhoDao _carrinhoDao = CarrinhoDao();
+  final ProdutoDao _produtoDao = ProdutoDao();
+
+  // Flag para indicar se o carrinho está vazio
+  bool get _isEmpty => _produtosMap.isEmpty;
+
+  // Estado de carregamento
+  bool _isLoading = true;
+  String? _errorMessage;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
-
-    // Inicializar o mapa de descontos a partir do CarrinhoWidget
-    _descontos = Map<Produto, double>.from(widget.carrinho.descontos ?? {});
-
-    // Garantir que todos os produtos tenham um valor de desconto (mesmo que seja 0)
-    for (var produto in widget.carrinho.itens.keys) {
-      if (!_descontos.containsKey(produto)) {
-        _descontos[produto] = 0.0;
-      }
-    }
+    _inicializarDados();
+    _carregarCondicoesPagamento();
 
     // Define o contexto para o PdfGenerator usar
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PdfGenerator.definirContexto(context);
+      if (!_isDisposed) {
+        PdfGenerator.definirContexto(context);
+      }
     });
   }
 
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
+
+  // Método para carregar as condições de pagamento
+  void _carregarCondicoesPagamento() {
+    // Usando o JSON fornecido
+    const String jsonData = '''
+    [
+      {
+        "codcndpgt": 1,
+        "dcrcndpgt": "A VISTA",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 2,
+        "dcrcndpgt": "C/APRESENTACAO",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 3,
+        "dcrcndpgt": "C/ ENTREGA",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 4,
+        "dcrcndpgt": "A PRAZO",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 5,
+        "dcrcndpgt": "30 DIAS",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 42,
+        "dcrcndpgt": "TABLET",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 6,
+        "dcrcndpgt": "5% DESCONTO  A VISTA DINHEIRO",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 7,
+        "dcrcndpgt": "5% DESCONTO BOLETO 7 DIAS",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 11,
+        "dcrcndpgt": "35/42",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 8,
+        "dcrcndpgt": "21/28/35 DIAS",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 13,
+        "dcrcndpgt": "21/28/35/42/49",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 20,
+        "dcrcndpgt": "BONIFICACAO",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 9,
+        "dcrcndpgt": "28/35/42 DD",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 14,
+        "dcrcndpgt": "DD BCO",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 10,
+        "dcrcndpgt": "35 DD",
+        "perdsccel": 0,
+        "staati": "S"
+      },
+      {
+        "codcndpgt": 15,
+        "dcrcndpgt": "3% DESCONTO BOLETO 7 DD",
+        "perdsccel": 0,
+        "staati": "S"
+      }
+    ]
+    ''';
+
+    try {
+      final List<dynamic> decodedData = jsonDecode(jsonData);
+      _condicoesPagamento =
+          decodedData.map((item) => CondicaoPagamento.fromJson(item)).toList();
+      debugPrint(
+          '📱 Carregadas ${_condicoesPagamento.length} condições de pagamento');
+    } catch (e) {
+      debugPrint('❌ Erro ao carregar condições de pagamento: $e');
+      // Criar lista vazia para evitar erros
+      _condicoesPagamento = [];
+    }
+  }
+
+  // Método para carregar dados do banco e inicializar os mapas locais
+  Future<void> _inicializarDados() async {
+    if (_isDisposed) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      // Carregar itens do banco de dados
+      _itensCarrinho = await _carrinhoDao.getItensCliente(widget.codcli);
+      debugPrint('📱 Carregados ${_itensCarrinho.length} itens do carrinho');
+
+      // Converter lista de CarrinhoItem para os mapas necessários
+      for (var item in _itensCarrinho) {
+        // Obter o produto através do codprd usando o ProdutoDao
+        Produto? produto = await _obterProdutoPeloCodigo(item.codprd);
+
+        if (produto != null) {
+          // Adicionar ao mapa de produtos
+          _produtosMap[produto] = item.quantidade;
+
+          // Adicionar ao mapa de descontos
+          _descontos[produto] =
+              item.desconto * 100; // Convertendo para porcentagem
+        }
+      }
+
+      if (!_isDisposed) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao inicializar dados: $e');
+      if (!_isDisposed) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  // Método para obter um produto pelo código usando o ProdutoDao
+  Future<Produto?> _obterProdutoPeloCodigo(int codprd) async {
+    try {
+      return await _produtoDao.getProdutoByCodigo(codprd);
+    } catch (e) {
+      debugPrint('❌ Erro ao obter produto $codprd: $e');
+      return null;
+    }
+  }
+
   // Método para atualizar o desconto de um produto
-  void atualizarDesconto(Produto produto, double novoDesconto) {
+  Future<void> atualizarDesconto(Produto produto, double novoDesconto) async {
+    if (_isDisposed) return;
+
     setState(() {
       // Validar o desconto (entre 0 e 100)
       novoDesconto = novoDesconto.clamp(0.0, 100.0);
-
-      // Atualizar no mapa local
       _descontos[produto] = novoDesconto;
-
-      // Sincronizar com o widget.carrinho.descontos para manter consistência
-      // Isso pode exigir alterações adicionais dependendo de como CarrinhoWidget é implementado
-      widget.carrinho.descontos[produto] = novoDesconto;
     });
+
+    try {
+      // Encontrar o item correspondente na lista
+      var itemIndex =
+          _itensCarrinho.indexWhere((item) => item.codprd == produto.codprd);
+
+      if (itemIndex >= 0) {
+        var item = _itensCarrinho[itemIndex];
+
+        // Criar item atualizado
+        final itemAtualizado = CarrinhoItem(
+          id: item.id,
+          codprd: item.codprd,
+          codcli: widget.codcli,
+          quantidade: item.quantidade,
+          desconto:
+              novoDesconto / 100, // Convertendo de porcentagem para decimal
+          finalizado: item.finalizado,
+          dataCriacao: item.dataCriacao,
+        );
+
+        // Atualizar na lista local
+        _itensCarrinho[itemIndex] = itemAtualizado;
+
+        // Salvar no banco de dados
+        await _carrinhoDao.salvarItem(itemAtualizado);
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao atualizar desconto: $e');
+    }
+  }
+
+  // Método para remover um produto do carrinho
+  Future<void> _removerProduto(Produto produto) async {
+    if (_isDisposed) return;
+
+    setState(() {
+      _produtosMap.remove(produto);
+      _descontos.remove(produto);
+      _itensCarrinho.removeWhere((item) => item.codprd == produto.codprd);
+    });
+
+    try {
+      await _carrinhoDao.removerItem(produto.codprd, widget.codcli);
+    } catch (e) {
+      debugPrint('❌ Erro ao remover produto: $e');
+    }
+  }
+
+  // Método para atualizar a quantidade de um produto
+  Future<void> _atualizarQuantidade(Produto produto, int quantidade) async {
+    if (_isDisposed) return;
+
+    if (quantidade <= 0) {
+      await _removerProduto(produto);
+      return;
+    }
+
+    setState(() {
+      _produtosMap[produto] = quantidade;
+    });
+
+    try {
+      // Encontrar o item na lista
+      var itemIndex =
+          _itensCarrinho.indexWhere((item) => item.codprd == produto.codprd);
+
+      if (itemIndex >= 0) {
+        var item = _itensCarrinho[itemIndex];
+
+        // Criar item atualizado
+        final itemAtualizado = CarrinhoItem(
+          id: item.id,
+          codprd: item.codprd,
+          codcli: widget.codcli,
+          quantidade: quantidade,
+          desconto:
+              (_descontos[produto] ?? 0.0) / 100, // Convertendo para decimal
+          finalizado: item.finalizado,
+          dataCriacao: item.dataCriacao,
+        );
+
+        // Atualizar na lista local
+        _itensCarrinho[itemIndex] = itemAtualizado;
+
+        // Salvar no banco de dados
+        await _carrinhoDao.salvarItem(itemAtualizado);
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao atualizar quantidade: $e');
+    }
   }
 
   // Calcula o total do carrinho sem descontos
   double get _totalSemDesconto {
-    final int tabelaPreco = widget.carrinho.cliente?.codtab ?? 1;
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
 
-    return widget.carrinho.itens.entries.fold(
+    return _produtosMap.entries.fold(
       0,
       (total, item) {
         double preco = tabelaPreco == 1 ? item.key.vlrtab1 : item.key.vlrtab2;
@@ -67,13 +382,14 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
   // Calcula o total com os descontos aplicados
   double get _totalComDesconto {
-    final int tabelaPreco = widget.carrinho.cliente?.codtab ?? 1;
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
 
-    return widget.carrinho.itens.entries.fold(
+    return _produtosMap.entries.fold(
       0,
       (total, item) {
         double preco = tabelaPreco == 1 ? item.key.vlrtab1 : item.key.vlrtab2;
         double desconto = _descontos[item.key] ?? 0.0;
+
         double precoComDesconto = preco * (1 - desconto / 100);
         return total + (precoComDesconto * item.value);
       },
@@ -83,280 +399,1152 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: Text("Carrinho de Compras"),
-        backgroundColor: Color(0xFF5D5CDE),
+        title: const Text(
+          "Carrinho",
+          style: TextStyle(fontWeight: FontWeight.w500),
+        ),
+        backgroundColor: const Color(0xFF5D5CDE),
         elevation: 0,
+        centerTitle: true,
       ),
-      body: widget.carrinho.isEmpty ? _buildEmptyCart() : _buildCartContent(),
+      body: _buildBody(),
     );
   }
 
-  Widget _buildEmptyCart() {
+  Widget _buildBody() {
+    if (_isLoading) {
+      return _buildLoadingState();
+    }
+
+    if (_errorMessage != null) {
+      return _buildErrorState();
+    }
+
+    if (_isEmpty) {
+      return _buildEmptyCart();
+    }
+
+    return _buildCartContent();
+  }
+
+  Widget _buildLoadingState() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.shopping_cart_outlined,
-            size: 80,
-            color: Colors.grey,
+          const CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
+            strokeWidth: 3,
           ),
-          SizedBox(height: 16),
+          const SizedBox(height: 24),
           Text(
-            "Seu carrinho está vazio",
+            'Carregando itens...',
             style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
               color: Colors.grey[700],
+              fontSize: 16,
             ),
-          ),
-          SizedBox(height: 8),
-          Text(
-            "Adicione produtos para continuar",
-            style: TextStyle(
-              color: Colors.grey[600],
-            ),
-          ),
-          SizedBox(height: 24),
-          ElevatedButton.icon(
-            icon: Icon(Icons.arrow_back),
-            label: Text("Voltar para produtos"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFF5D5CDE),
-              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            onPressed: () => Navigator.of(context).pop(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCartContent() {
-    return Padding(
-      padding: EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Card de informações do cliente (se houver)
-          if (widget.carrinho.cliente != null)
-            Card(
-              elevation: 2,
-              margin: EdgeInsets.only(bottom: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                    color: Color(0xFF5D5CDE).withOpacity(0.3), width: 1),
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 56, color: Colors.red[400]),
+            const SizedBox(height: 24),
+            const Text(
+              'Não foi possível carregar o carrinho',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage!,
+              style: TextStyle(color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: 200,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D5CDE),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: _inicializarDados,
+                child: const Text('Tentar novamente'),
               ),
-              child: Padding(
-                padding: EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyCart() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.shopping_bag_outlined,
+              size: 72,
+              color: Color(0xFFBBBBBB),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              "Seu carrinho está vazio",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[800],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              "Adicione produtos para continuar com a compra",
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: 200,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.arrow_back),
+                label: const Text("Voltar para produtos"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D5CDE),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCartContent() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Cliente info card (if available)
+        if (widget.cliente != null) _buildClienteInfo(),
+
+        // Cart items list
+        Expanded(
+          child: _buildCartItemsList(),
+        ),
+
+        // Cart summary
+        _buildCartSummary(),
+      ],
+    );
+  }
+
+  Widget _buildClienteInfo() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: const Color(0xFF5D5CDE).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Icon(
+              Icons.person_outline,
+              color: Color(0xFF5D5CDE),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.cliente!.nomcli,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 16,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "Código: ${widget.cliente!.codcli} • Tabela: ${widget.cliente!.codtab}",
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCartItemsList() {
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      itemCount: _produtosMap.length,
+      itemBuilder: (context, index) {
+        final produto = _produtosMap.keys.elementAt(index);
+        return _buildCartItem(produto);
+      },
+    );
+  }
+
+  Widget _buildCartItem(Produto produto) {
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
+    final int quantidade = _produtosMap[produto] ?? 0;
+    final double preco = tabelaPreco == 1 ? produto.vlrtab1 : produto.vlrtab2;
+    final double desconto = _descontos[produto] ?? 0.0;
+    final double precoComDesconto = preco * (1 - desconto / 100);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Product info
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Icon placeholder
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Center(
+                    child: Icon(
+                      Icons.inventory_2_outlined,
+                      color: Color(0xFF5D5CDE),
+                      size: 24,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                // Product details
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        produto.dcrprd,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 15,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Cód: ${produto.codprd} • ${produto.nommrc}',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Price with discount
+                      Row(
+                        children: [
+                          if (desconto > 0) ...[
+                            Text(
+                              'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                decoration: TextDecoration.lineThrough,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            'R\$ ${precoComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: desconto > 0
+                                  ? Colors.green[700]
+                                  : Colors.black87,
+                            ),
+                          ),
+                          if (desconto > 0) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.green[50],
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: Colors.green[100]!),
+                              ),
+                              child: Text(
+                                '-${desconto.toStringAsFixed(0)}%',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.green[700],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Bottom section with quantity control and discount
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(12),
+                bottomRight: Radius.circular(12),
+              ),
+            ),
+            child: Column(
+              children: [
+                // Quantity row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    Text(
+                      'Quantidade',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                    ),
                     Row(
                       children: [
+                        _buildQuantityButton(
+                          Icons.remove,
+                          quantidade > 1
+                              ? () =>
+                                  _atualizarQuantidade(produto, quantidade - 1)
+                              : null,
+                        ),
                         Container(
-                          padding: EdgeInsets.all(8),
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 6),
                           decoration: BoxDecoration(
-                            color: Color(0xFF5D5CDE).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey[300]!),
                           ),
-                          child: Icon(
-                            Icons.person,
+                          child: Text(
+                            '$quantidade',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w500,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        _buildQuantityButton(
+                          Icons.add,
+                          () => _atualizarQuantidade(produto, quantidade + 1),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+
+                // Discount row
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Desconto',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    SizedBox(
+                      width: 80,
+                      height: 32,
+                      child: TextFormField(
+                        initialValue: desconto.toStringAsFixed(0),
+                        keyboardType: TextInputType.number,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: desconto > 0
+                              ? Colors.green[700]
+                              : Colors.grey[700],
+                          fontWeight: FontWeight.w500,
+                        ),
+                        decoration: InputDecoration(
+                          suffixText: '%',
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 0),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(4),
+                            borderSide: BorderSide(color: Colors.grey[300]!),
+                          ),
+                        ),
+                        onChanged: (value) {
+                          final novoDesconto = double.tryParse(value) ?? 0.0;
+                          atualizarDesconto(produto, novoDesconto);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 12),
+
+                // Subtotal and remove button
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Subtotal',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                        Text(
+                          'R\$ ${(precoComDesconto * quantidade).toStringAsFixed(2).replaceAll('.', ',')}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
                             color: Color(0xFF5D5CDE),
                           ),
                         ),
-                        SizedBox(width: 12),
+                      ],
+                    ),
+                    TextButton.icon(
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: Colors.red[600],
+                      ),
+                      label: Text(
+                        'Remover',
+                        style: TextStyle(
+                          color: Colors.red[600],
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 6),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          side: BorderSide(color: Colors.red[200]!),
+                        ),
+                        backgroundColor: Colors.red[50],
+                      ),
+                      onPressed: () => _removerProduto(produto),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuantityButton(IconData icon, VoidCallback? onPressed) {
+    return InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(4),
+      child: Ink(
+        decoration: BoxDecoration(
+          color: onPressed == null ? Colors.grey[200] : Colors.white,
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(
+            color:
+                onPressed == null ? Colors.grey[300]! : const Color(0xFF5D5CDE),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            icon,
+            size: 16,
+            color:
+                onPressed == null ? Colors.grey[500] : const Color(0xFF5D5CDE),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCartSummary() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Summary details
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Subtotal',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                Text(
+                  'R\$ ${_totalSemDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            if (_totalSemDesconto > _totalComDesconto) ...[
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Descontos',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                  Text(
+                    '-R\$ ${(_totalSemDesconto - _totalComDesconto).toStringAsFixed(2).replaceAll('.', ',')}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            Divider(color: Colors.grey[200], height: 1),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Total',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  'R\$ ${_totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF5D5CDE),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // Transfer button
+            ElevatedButton(
+              onPressed: () {
+                if (widget.cliente == null) {
+                  _mostrarErroClienteNaoAssociado();
+                } else {
+                  _mostrarDialogoTransferirCarrinho();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5D5CDE),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 0,
+              ),
+              child: const Text(
+                'Transferir Carrinho',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _mostrarErroClienteNaoAssociado() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Atenção"),
+        content: const Text(
+          "Não há cliente associado a este pedido. A transferência não poderá ser realizada.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _mostrarDialogoTransferirCarrinho() async {
+    if (!mounted) return;
+
+    String observacao = '';
+    CondicaoPagamento? formaPagamentoSelecionada =
+        _condicoesPagamento.isNotEmpty ? _condicoesPagamento.first : null;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+        titlePadding: EdgeInsets.zero,
+        title: Container(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+          decoration: const BoxDecoration(
+            color: Color(0xFF5D5CDE),
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(10),
+              topRight: Radius.circular(10),
+            ),
+          ),
+          child: const Row(
+            children: [
+              Icon(
+                Icons.send_outlined,
+                color: Colors.white,
+              ),
+              SizedBox(width: 12),
+              Text(
+                "Transferir Carrinho",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        content: SingleChildScrollView(
+          child: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Cliente info
+                if (widget.cliente != null)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.person_outline,
+                          color: Color(0xFF5D5CDE),
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "Cliente do Pedido",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              Text(
-                                widget.carrinho.cliente!.nomcli,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
+                                widget.cliente!.nomcli,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w500,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                "Cód: ${widget.cliente!.codcli}",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                ),
                               ),
                             ],
                           ),
                         ),
                       ],
                     ),
-                    Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Row(
+                  ),
+
+                // Resumo do pedido
+                Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Resumo do pedido:",
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
+                          const Text("Itens:"),
+                          Text("${_produtosMap.length}"),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text("Total:"),
                           Text(
-                            "Código: ${widget.carrinho.cliente!.codcli}",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          Text(
-                            "Tabela: ${widget.carrinho.cliente!.codtab}",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
+                            "R\$ ${_totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}",
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w500,
+                              color: Color(0xFF5D5CDE),
                             ),
                           ),
                         ],
                       ),
+                    ],
+                  ),
+                ),
+
+                // Observação
+                const Text(
+                  "Observação (opcional):",
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: Colors.grey[400]!),
                     ),
-                  ],
+                    hintText: "Digite qualquer observação sobre o pedido",
+                    contentPadding: const EdgeInsets.all(12),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                  ),
+                  onChanged: (value) => observacao = value,
+                ),
+                const SizedBox(height: 16),
+
+                // Forma de Pagamento
+                const Text(
+                  "Forma de Pagamento:",
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _condicoesPagamento.isEmpty
+                    ? const Text("Não há condições de pagamento disponíveis")
+                    : StatefulBuilder(builder: (context, setState) {
+                        return DropdownButtonFormField<CondicaoPagamento>(
+                          isExpanded: true,
+                          value: formaPagamentoSelecionada,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: Colors.grey[400]!),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            filled: true,
+                            fillColor: Colors.grey[50],
+                            prefixIcon:
+                                const Icon(Icons.payment_outlined, size: 20),
+                          ),
+                          items: _condicoesPagamento.map((condicao) {
+                            return DropdownMenuItem<CondicaoPagamento>(
+                              value: condicao,
+                              child: Text(
+                                condicao.dcrcndpgt,
+                                style: const TextStyle(fontSize: 14),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (newValue) {
+                            if (newValue != null) {
+                              setState(() {
+                                formaPagamentoSelecionada = newValue;
+                              });
+                            }
+                          },
+                        );
+                      }),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.grey[700],
+                    side: BorderSide(color: Colors.grey[400]!),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancelar"),
                 ),
               ),
-            ),
-
-          // Lista de itens do carrinho
-          Expanded(
-            child: _buildCartItemsList(),
-          ),
-
-          // Resumo do carrinho
-          Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Resumo do pedido",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF5D5CDE),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5D5CDE),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    elevation: 0,
                   ),
-                  SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Subtotal:",
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      Text(
-                        "R\$ ${_totalSemDesconto.toStringAsFixed(2).replaceAll('.', ',')}",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_totalSemDesconto > _totalComDesconto)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          "Descontos:",
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.green[700],
-                          ),
-                        ),
-                        Text(
-                          "-R\$ ${(_totalSemDesconto - _totalComDesconto).toStringAsFixed(2).replaceAll('.', ',')}",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                  Divider(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        "Total:",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        "R\$ ${_totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}",
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF5D5CDE),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                  onPressed: () {
+                    // Capturar os valores antes de fechar o diálogo
+                    final String obs = observacao;
+                    final String codPagto =
+                        formaPagamentoSelecionada?.codcndpgt.toString() ?? '1';
+
+                    Navigator.pop(context);
+                    _transferirCarrinho(
+                      observacao: obs,
+                      formaPagamento: codPagto,
+                    );
+                  },
+                  child: const Text("Transferir"),
+                ),
               ),
-            ),
+            ],
           ),
+        ],
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+      ),
+    );
+  }
 
-          SizedBox(height: 16),
+// Método para transferir o carrinho (enviar POST)
+  Future<void> _transferirCarrinho({
+    String observacao = '',
+    String formaPagamento = '1',
+  }) async {
+    if (!mounted) return;
 
-          // Botão para finalizar compra
-          ElevatedButton.icon(
-            icon: Icon(Icons.summarize),
-            label: Text(
-              "Finalizar Pedido",
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Color(0xFF5D5CDE),
-              padding: EdgeInsets.symmetric(vertical: 15),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            onPressed: () async {
-              // Verificar se tem cliente associado
-              if (widget.carrinho.cliente == null) {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: Text("Atenção"),
-                    content: Text(
-                        "Não há cliente associado a este pedido. O PDF será gerado sem dados do cliente."),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text("Cancelar"),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          _gerarPDF();
-                        },
-                        child: Text("Continuar"),
-                      ),
-                    ],
-                  ),
-                );
-              } else {
-                _gerarPDF();
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
+    final BuildContext contextAtual = context;
+
+    // Salvar uma cópia dos itens do carrinho para usar no PDF posteriormente
+    final List<CarrinhoItem> itensSalvos = List.from(_itensCarrinho);
+    final Map<Produto, int> produtosSalvos = Map.from(_produtosMap);
+    final Map<Produto, double> descontosSalvos = Map.from(_descontos);
+
+    // Mostrar diálogo de progresso
+    BuildContext? dialogContext;
+    showDialog(
+      context: contextAtual,
+      barrierDismissible: false,
+      builder: (context) {
+        dialogContext = context;
+        return AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              CircularProgressIndicator(),
+              SizedBox(height: 20),
+              Text("Transferindo dados do carrinho..."),
+            ],
+          ),
+        );
+      },
+    );
+
+    try {
+      // Preparar a lista de produtos no formato requerido
+      List<Map<String, dynamic>> produtosJson = [];
+
+      _produtosMap.forEach((produto, quantidade) {
+        double preco = tabelaPreco == 1 ? produto.vlrtab1 : produto.vlrtab2;
+        double desconto = _descontos[produto] ?? 0.0;
+
+        produtosJson.add({
+          "cod_produto": produto.codprd.toString(),
+          "quantidade": quantidade,
+          "vlr_unitario": preco,
+          "per_desconto": desconto,
+        });
+      });
+
+      // Gerar número de pedido no formato YYYYMMDD-CCC
+      // onde YYYYMMDD é a data atual e CCC é o código do cliente com 3 dígitos
+      final DateTime agora = DateTime.now();
+
+      // Formatação da data no padrão YYYYMMDD
+      final String dataFormatada = "${agora.year}"
+          "${agora.month.toString().padLeft(2, '0')}"
+          "${agora.day.toString().padLeft(2, '0')}";
+
+      // Formatação do código do cliente com 3 dígitos
+      final String codigoCliente =
+          (widget.cliente?.codcli ?? '000').toString().padLeft(3, '0');
+
+      // Combinação dos elementos no formato final YYYYMMDD-CCC
+      final String numPedido = "$dataFormatada-$codigoCliente";
+
+      // Criar ID completo do pedido que inclui também a hora para garantir unicidade
+      final String dataHoraCompleta = "${dataFormatada}_"
+          "${agora.hour.toString().padLeft(2, '0')}"
+          "${agora.minute.toString().padLeft(2, '0')}"
+          "${agora.second.toString().padLeft(2, '0')}";
+
+      // ID do pedido completo com timestamp para garantir unicidade
+      final String idPedido = dataHoraCompleta.toUpperCase();
+
+      // Data do pedido no formato dd/MM/yyyy
+      final String dataPedido = DateFormat('dd/MM/yyyy').format(DateTime.now());
+
+      // Objeto JSON completo para envio
+      final Map<String, dynamic> dadosPedido = {
+        "num_pedido": numPedido,
+        "id": idPedido,
+        "data_pedido": dataPedido,
+        "cod_cliente": widget.cliente?.codcli.toString() ?? "",
+        "vlr_pedido": _totalComDesconto,
+        "cod_vendedor": "999", // Código do vendedor fixo
+        "cod_condicao_pagto": formaPagamento,
+        "observacao": observacao,
+        "produtos": produtosJson,
+      };
+
+      // Logar o JSON que será enviado
+      debugPrint('📤 Enviando JSON: ${jsonEncode(dadosPedido)}');
+
+      // Enviar requisição POST
+      final Uri uri =
+          Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(dadosPedido),
+      );
+
+      // Resto do código permanece inalterado...
+
+      // Fechar diálogo de progresso
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      }
+
+      // Verificar resposta
+      debugPrint('📥 Resposta (${response.statusCode}): ${response.body}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        // Transferência bem-sucedida
+        await _finalizarItensCarrinho();
+
+        // Verificar se o widget ainda está montado
+        if (!mounted) return;
+
+        // Mostrar mensagem de sucesso
+        await _mostrarDialogoSucesso(contextAtual, numPedido, itensSalvos,
+            produtosSalvos, descontosSalvos, observacao);
+      } else {
+        // Erro na transferência
+        await _mostrarDialogoErro(contextAtual, response, dadosPedido);
+      }
+    } catch (e) {
+      // Fechar diálogo de progresso
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      }
+
+      // Verificar se o widget ainda está montado
+      if (!mounted) return;
+
+      // Mostrar diálogo de erro de conexão
+      await _mostrarDialogoErroConexao(
+          contextAtual, e, observacao, formaPagamento);
+    }
+  }
+
+  Future<void> _mostrarDialogoSucesso(
+    BuildContext contextAtual,
+    String numPedido,
+    List<CarrinhoItem> itensSalvos,
+    Map<Produto, int> produtosSalvos,
+    Map<Produto, double> descontosSalvos,
+    String observacao,
+  ) async {
+    await showDialog(
+      context: contextAtual,
+      barrierDismissible: false,
+      builder: (BuildContext context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green[600], size: 28),
+            const SizedBox(width: 8),
+            Text("Sucesso!", style: TextStyle(color: Colors.green[700])),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Carrinho transferido com sucesso!"),
+            const SizedBox(height: 8),
+            Text("Número do pedido: $numPedido",
+                style: const TextStyle(fontWeight: FontWeight.w500)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (mounted) {
+                Navigator.of(contextAtual).popUntil((route) => route.isFirst);
               }
+            },
+            child: const Text("OK"),
+          ),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.picture_as_pdf, size: 18),
+            label: const Text("Gerar PDF"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5D5CDE),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              Navigator.of(context).pop();
+              _gerarPDFComDadosSalvos(
+                itensSalvos: itensSalvos,
+                produtosSalvos: produtosSalvos,
+                descontosSalvos: descontosSalvos,
+                observacao: observacao,
+                contextAtual: contextAtual,
+                numPedido: numPedido, // Adicionado número do pedido
+              );
             },
           ),
         ],
@@ -364,14 +1552,198 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  // Método para extrair a lógica de geração do PDF
-  Future<void> _gerarPDF() async {
+  Future<void> _mostrarDialogoErro(
+    BuildContext contextAtual,
+    http.Response response,
+    Map<String, dynamic> dadosPedido,
+  ) async {
+    // Tentar analisar a resposta de erro como JSON
+    Map<String, dynamic>? responseJson;
+    String errorMessage = "Erro desconhecido";
+
     try {
-      // Mostrar progresso
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
+      if (response.body.isNotEmpty) {
+        responseJson = jsonDecode(response.body) as Map<String, dynamic>;
+        errorMessage = responseJson['message'] ??
+            responseJson['error'] ??
+            "Erro ao transferir carrinho";
+      }
+    } catch (e) {
+      errorMessage = response.body.isNotEmpty
+          ? response.body
+          : "Erro ao transferir carrinho (Código: ${response.statusCode})";
+    }
+
+    // Verificar se o widget ainda está montado
+    if (!mounted) return;
+
+    // Exibir detalhes do erro em diálogo simplificado
+    await showDialog(
+      context: contextAtual,
+      builder: (BuildContext context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red[600], size: 24),
+            const SizedBox(width: 8),
+            Text("Erro", style: TextStyle(color: Colors.red[700])),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Não foi possível transferir o carrinho",
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red[100]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Detalhes do erro:",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Colors.red[800],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text("Código: ${response.statusCode}"),
+                  const SizedBox(height: 4),
+                  Text("Mensagem: $errorMessage"),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text("Fechar"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5D5CDE),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("Tentar Novamente"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _mostrarDialogoErroConexao(
+    BuildContext contextAtual,
+    dynamic error,
+    String observacao,
+    String formaPagamento,
+  ) async {
+    await showDialog(
+      context: contextAtual,
+      builder: (BuildContext context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.wifi_off, color: Colors.red[600], size: 24),
+            const SizedBox(width: 8),
+            Text("Erro de Conexão", style: TextStyle(color: Colors.red[700])),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Não foi possível conectar ao servidor",
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red[50],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red[100]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Verifique sua conexão com a internet e tente novamente.",
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text("Fechar"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (mounted) {
+                _transferirCarrinho(
+                  observacao: observacao,
+                  formaPagamento: formaPagamento,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5D5CDE),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text("Tentar Novamente"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Novo método para gerar PDF com dados salvos antes de finalizar o carrinho
+  Future<void> _gerarPDFComDadosSalvos({
+    required List<CarrinhoItem> itensSalvos,
+    required Map<Produto, int> produtosSalvos,
+    required Map<Produto, double> descontosSalvos,
+    required BuildContext contextAtual,
+    String observacao = '',
+    String nomeVendedor = '',
+    String nomeClienteResponsavel = '',
+    String emailCliente = '',
+    String formaPagamento = '',
+    String numPedido = '', // Adicionado parâmetro
+  }) async {
+    // Diálogo de contexto para progresso
+    BuildContext? dialogContext;
+
+    // Mostrar progresso
+    showDialog(
+      context: contextAtual,
+      barrierDismissible: false,
+      builder: (context) {
+        dialogContext = context;
+        return const AlertDialog(
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -380,321 +1752,186 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
               Text("Gerando PDF..."),
             ],
           ),
-        ),
-      );
+        );
+      },
+    );
 
-      // Usar a versão simplificada - passando os descontos do estado local
+    try {
+      if (produtosSalvos.isEmpty) {
+        // Fechar diálogo de progresso
+        if (dialogContext != null &&
+            Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+          Navigator.of(dialogContext!, rootNavigator: true).pop();
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(contextAtual).showSnackBar(
+            SnackBar(
+              content: const Text("Não há dados para gerar o PDF"),
+              backgroundColor: Colors.red[700],
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          Navigator.of(contextAtual).popUntil((route) => route.isFirst);
+        }
+        return;
+      }
+
+      // Gerar PDF com os mapas salvos
       final filePath = await PdfGeneratorSimples.gerarPdfSimples(
-        widget.carrinho.itens,
-        _descontos, // Use o mapa de descontos local
-        widget.carrinho.cliente,
+        produtosSalvos,
+        descontosSalvos,
+        widget.cliente,
+        observacao,
+        nomeVendedor,
+        nomeClienteResponsavel,
+        emailCliente,
+        formaPagamento,
+        numPedido, // Passando o número do pedido para o gerador PDF
       );
 
       // Fechar diálogo de progresso
-      Navigator.of(context, rootNavigator: true).pop();
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      }
+
+      if (!mounted) return;
 
       if (filePath != null) {
         // Mostrar diálogo de sucesso com opções
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text("PDF Gerado com Sucesso!"),
-            content: Text("O arquivo foi salvo em:\n$filePath"),
+        await showDialog(
+          context: contextAtual,
+          builder: (BuildContext context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.picture_as_pdf, color: Colors.green[600], size: 24),
+                const SizedBox(width: 8),
+                const Text("PDF Gerado", style: TextStyle(fontSize: 18)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("O arquivo foi salvo com sucesso!"),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    filePath,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
             actions: [
               TextButton(
                 onPressed: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).pop(); // Volta para tela anterior
+                  // Navegar para a HomeScreen após fechar o diálogo
+                  if (mounted) {
+                    Navigator.of(contextAtual)
+                        .popUntil((route) => route.isFirst);
+                  }
                 },
-                child: Text("OK"),
+                child: const Text("OK"),
               ),
-              TextButton(
+              ElevatedButton.icon(
+                icon: const Icon(Icons.share, size: 18),
+                label: const Text("Compartilhar"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D5CDE),
+                  foregroundColor: Colors.white,
+                ),
                 onPressed: () async {
                   Navigator.of(context).pop();
                   await PdfGeneratorSimples.compartilharArquivo(filePath);
+                  // Navegar para a HomeScreen após compartilhar
+                  if (mounted) {
+                    Navigator.of(contextAtual)
+                        .popUntil((route) => route.isFirst);
+                  }
                 },
-                child: Text("Compartilhar"),
               ),
             ],
           ),
         );
       } else {
         // Mostrar erro
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("❌ Erro ao gerar PDF"),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(contextAtual).showSnackBar(
+            SnackBar(
+              content: const Text("Erro ao gerar PDF"),
+              backgroundColor: Colors.red[700],
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          // Navegar para a HomeScreen mesmo em caso de erro
+          Navigator.of(contextAtual).popUntil((route) => route.isFirst);
+        }
       }
     } catch (e) {
       // Fechar diálogo de progresso se estiver aberto
-      if (Navigator.of(context, rootNavigator: true).canPop()) {
-        Navigator.of(context, rootNavigator: true).pop();
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
 
+      if (!mounted) return;
+
       // Mostrar erro
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(contextAtual).showSnackBar(
         SnackBar(
-          content: Text("❌ Erro ao gerar PDF: $e"),
+          content: Text("Erro ao gerar PDF: $e"),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
         ),
       );
+
+      // Navegar para a HomeScreen mesmo em caso de erro
+      Navigator.of(contextAtual).popUntil((route) => route.isFirst);
     }
   }
 
-  Widget _buildCartItemsList() {
-    final int tabelaPreco = widget.carrinho.cliente?.codtab ?? 1;
-
-    return ListView.separated(
-      itemCount: widget.carrinho.itens.length,
-      separatorBuilder: (context, index) => Divider(height: 1),
-      itemBuilder: (context, index) {
-        // Obtém o produto e quantidade pelo índice
-        final produto = widget.carrinho.itens.keys.elementAt(index);
-        final quantidade = widget.carrinho.itens[produto] ?? 0;
-
-        // Obtém o preço baseado na tabela do cliente
-        final double preco =
-            tabelaPreco == 1 ? produto.vlrtab1 : produto.vlrtab2;
-
-        // Obtém o desconto do mapa local
-        final double desconto = _descontos[produto] ?? 0.0;
-
-        // Calcula o preço com desconto
-        final double precoComDesconto = preco * (1 - desconto / 100);
-
-        return Card(
-          margin: EdgeInsets.symmetric(vertical: 4),
-          child: Padding(
-            padding: EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Imagem ou placeholder
-                    Container(
-                      width: 60,
-                      height: 60,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[200],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
-                        child: Icon(
-                          Icons.inventory_2,
-                          color: Color(0xFF5D5CDE),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    // Informações do produto
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            produto.dcrprd,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          SizedBox(height: 4),
-                          Text(
-                            'Cód: ${produto.codprd} | ${produto.nommrc}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    // Preço e quantidade
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Valor unitário:',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        desconto > 0
-                            ? Row(
-                                children: [
-                                  Text(
-                                    'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      decoration: TextDecoration.lineThrough,
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'R\$ ${precoComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green[700],
-                                    ),
-                                  ),
-                                ],
-                              )
-                            : Text(
-                                'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ],
-                    ),
-                    // Controle de quantidade
-                    Row(
-                      children: [
-                        IconButton(
-                          icon: Icon(Icons.remove_circle_outline),
-                          color: Color(0xFF5D5CDE),
-                          onPressed: quantidade > 1
-                              ? () {
-                                  setState(() {
-                                    widget.carrinho.itens[produto] =
-                                        quantidade - 1;
-                                  });
-                                }
-                              : null,
-                        ),
-                        Text(
-                          '$quantidade',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.add_circle_outline),
-                          color: Color(0xFF5D5CDE),
-                          onPressed: () {
-                            setState(() {
-                              widget.carrinho.itens[produto] = quantidade + 1;
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                // Campo para editar o desconto
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Desconto:',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Container(
-                        width: 70,
-                        height: 36,
-                        child: TextFormField(
-                          initialValue: desconto.toStringAsFixed(0),
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: desconto > 0
-                                ? Colors.green[700]
-                                : Colors.grey[700],
-                            fontWeight: FontWeight.bold,
-                          ),
-                          decoration: InputDecoration(
-                            suffixText: '%',
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 0),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(4),
-                              borderSide: BorderSide(color: Colors.grey[400]!),
-                            ),
-                          ),
-                          onChanged: (value) {
-                            final novoDesconto = double.tryParse(value) ?? 0.0;
-                            atualizarDesconto(produto, novoDesconto);
-                          },
-                        ),
-                      ),
-                      Spacer(),
-                      if (desconto > 0)
-                        Text(
-                          'Economia: R\$ ${((preco - precoComDesconto) * quantidade).toStringAsFixed(2).replaceAll('.', ',')}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.green[700],
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Divider(),
-                // Subtotal
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Subtotal:'),
-                    Text(
-                      'R\$ ${(precoComDesconto * quantidade).toStringAsFixed(2).replaceAll('.', ',')}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: Color(0xFF5D5CDE),
-                      ),
-                    ),
-                  ],
-                ),
-                // Botão para remover
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    icon: Icon(Icons.delete_outline, size: 18),
-                    label: Text('Remover'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.red[700],
-                      padding: EdgeInsets.zero,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        widget.carrinho.itens.remove(produto);
-                        _descontos.remove(produto);
-                      });
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+  // Método para marcar os itens como finalizados no banco de dados
+  Future<void> _finalizarItensCarrinho() async {
+    try {
+      for (var item in _itensCarrinho) {
+        // Criar item atualizado com finalizado = 1
+        final itemFinalizado = CarrinhoItem(
+          id: item.id,
+          codprd: item.codprd,
+          codcli: item.codcli,
+          quantidade: item.quantidade,
+          desconto: item.desconto,
+          finalizado: 1, // Setando para 1 (finalizado)
+          dataCriacao: item.dataCriacao,
         );
-      },
-    );
+
+        // Salvar no banco de dados
+        await _carrinhoDao.salvarItem(itemFinalizado);
+      }
+
+      // Atualiza a lista local - somente se o widget ainda estiver montado
+      if (!_isDisposed) {
+        setState(() {
+          _itensCarrinho.clear();
+          _produtosMap.clear();
+          _descontos.clear();
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao finalizar itens: $e');
+    }
   }
 }

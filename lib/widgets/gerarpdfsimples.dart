@@ -27,9 +27,17 @@ class PdfGeneratorSimples {
 
   // Método simples que apenas gera e salva o PDF sem tentar exibi-lo
   static Future<String?> gerarPdfSimples(
-      Map<Produto, int> itens, Map<Produto, double> descontos,
-      [Cliente? cliente]) async {
-    print("📌 Iniciando geração de PDF para Dousig Vendas...");
+    Map<Produto, int> itens,
+    Map<Produto, double> descontos, [
+    Cliente? cliente,
+    String observacao = '',
+    String nomeVendedor = '',
+    String nomeClienteResponsavel = '',
+    String emailCliente = '',
+    String formaPagamento = '',
+    String numPedido = '',
+  ]) async {
+    print("📌 Iniciando geração de PDF para MobileDousig...");
     try {
       // 1. Criar o documento PDF
       final pdf = pw.Document();
@@ -41,6 +49,11 @@ class PdfGeneratorSimples {
           "${agora.day.toString().padLeft(2, '0')}/${agora.month.toString().padLeft(2, '0')}/${agora.year} ${agora.hour.toString().padLeft(2, '0')}:${agora.minute.toString().padLeft(2, '0')}";
       final String dataArquivo =
           "${agora.year}${agora.month.toString().padLeft(2, '0')}${agora.day.toString().padLeft(2, '0')}_${agora.hour.toString().padLeft(2, '0')}${agora.minute.toString().padLeft(2, '0')}${agora.second.toString().padLeft(2, '0')}";
+
+      // Usar numPedido fornecido ou gerar um
+      final String numeroPedido = numPedido.isNotEmpty
+          ? numPedido
+          : "${dataArquivo.substring(0, 8)}-${(cliente?.codcli ?? '000').toString().padLeft(3, '0')}";
 
       // 3. Calcular valores
       final tabelaPreco = cliente?.codtab ?? 1;
@@ -82,7 +95,7 @@ class PdfGeneratorSimples {
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
                       pw.Text(
-                        "DOUSIG VENDAS",
+                        "AMBER DISTRIBUIÇÃO",
                         style: pw.TextStyle(
                           fontSize: 20,
                           fontWeight: pw.FontWeight.bold,
@@ -90,7 +103,7 @@ class PdfGeneratorSimples {
                         ),
                       ),
                       pw.Text(
-                        "Sistema Integrado de Gestão de Vendas",
+                        "Ambar Comercio E Distribuição LTDA",
                         style: pw.TextStyle(
                           fontSize: 10,
                           color: corTexto,
@@ -113,7 +126,7 @@ class PdfGeneratorSimples {
                       ),
                       pw.SizedBox(height: 2),
                       pw.Text(
-                        "Nº ${dataArquivo.substring(0, 8)}-${(cliente?.codcli ?? '000').toString().padLeft(3, '0')}",
+                        "Nº ${numeroPedido}",
                         style: pw.TextStyle(
                           fontSize: 10,
                           color: corSecundaria,
@@ -409,6 +422,38 @@ class PdfGeneratorSimples {
                                 ),
                               ],
                             ),
+                            pw.SizedBox(height: 10),
+                            // Linha 4: Forma de Pagamento
+                            pw.Row(
+                              children: [
+                                pw.Expanded(
+                                  flex: 2,
+                                  child: pw.Column(
+                                    crossAxisAlignment:
+                                        pw.CrossAxisAlignment.start,
+                                    children: [
+                                      pw.Text(
+                                        "Forma de Pagamento:",
+                                        style: pw.TextStyle(
+                                          fontSize: 8,
+                                          color: corTextoClara,
+                                        ),
+                                      ),
+                                      pw.Text(
+                                        formaPagamento.isNotEmpty
+                                            ? formaPagamento
+                                            : "À vista",
+                                        style: pw.TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: pw.FontWeight.bold,
+                                          color: corTexto,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -609,51 +654,7 @@ class PdfGeneratorSimples {
 
               pw.SizedBox(height: 30),
 
-              // Assinaturas com estilo melhorado
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.center,
-                    children: [
-                      pw.Container(
-                        width: 200,
-                        height: 1,
-                        color: corPrimaria,
-                      ),
-                      pw.SizedBox(height: 5),
-                      pw.Text(
-                        "Assinatura do Vendedor",
-                        style: pw.TextStyle(
-                          fontSize: 9,
-                          color: corTexto,
-                        ),
-                      ),
-                    ],
-                  ),
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.center,
-                    children: [
-                      pw.Container(
-                        width: 200,
-                        height: 1,
-                        color: corPrimaria,
-                      ),
-                      pw.SizedBox(height: 5),
-                      pw.Text(
-                        "Assinatura do Cliente",
-                        style: pw.TextStyle(
-                          fontSize: 9,
-                          color: corTexto,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-
-              // Termos e condições
-              pw.SizedBox(height: 20),
+              // Observações
               pw.Container(
                 padding: pw.EdgeInsets.all(8),
                 decoration: pw.BoxDecoration(
@@ -673,7 +674,9 @@ class PdfGeneratorSimples {
                     ),
                     pw.SizedBox(height: 4),
                     pw.Text(
-                      "Este documento representa um pedido de venda gerado pelo sistema Dousig Vendas. Os valores e condições apresentados estão sujeitos à confirmação. Este documento não possui valor fiscal.",
+                      observacao.isNotEmpty
+                          ? observacao
+                          : "Este documento representa um pedido de venda gerado pelo sistema Dousig Vendas. Os valores e condições apresentados estão sujeitos à confirmação. Este documento não possui valor fiscal.",
                       style: pw.TextStyle(
                         fontSize: 7,
                         color: corTextoClara,
