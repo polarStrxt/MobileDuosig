@@ -3,6 +3,7 @@ import 'package:flutter_docig_venda/widgets/perfilCriente.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/dao/cliente_dao.dart';
 import 'package:flutter_docig_venda/widgets/app_drawer.dart';
+import 'package:flutter_docig_venda/services/Sincronizacao.dart';
 import 'dart:async';
 
 class HomeScreen extends StatefulWidget {
@@ -25,9 +26,11 @@ class _HomeScreenState extends State<HomeScreen> {
   bool isLoading = true;
   bool hasError = false;
   String errorMessage = '';
+  bool isSyncing = false;
 
   // Controllers
   final ClienteDao _clienteDao = ClienteDao();
+  final SyncService _syncService = SyncService();
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
   Timer? _debounceTimer;
@@ -35,7 +38,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    carregarClientesLocal();
+    // Inicia a sincronização e depois carrega os dados locais
+    _sincronizarDados(mostrarUI: false).then((_) => carregarClientesLocal());
   }
 
   @override
@@ -46,7 +50,75 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // MÉTODOS DE CARREGAMENTO DE DADOS
+  // MÉTODOS DE CARREGAMENTO E SINCRONIZAÇÃO DE DADOS
+
+  Future<void> _sincronizarDados({bool mostrarUI = true}) async {
+    if (isSyncing) return; // Evita múltiplas sincronizações simultâneas
+    
+    // Se for para mostrar na UI, exibe diálogo de progresso
+    if (mostrarUI) {
+      setState(() {
+        isSyncing = true;
+      });
+      _mostrarDialogoCarregamento(mensagem: 'Sincronizando dados com o servidor...');
+    }
+
+    try {
+      // Verifica conexão com a internet primeiro
+      final conexaoResult = await _syncService.verificarConexaoInternet();
+      
+      if (!conexaoResult.isSuccess || !conexaoResult.data!) {
+        if (mostrarUI) {
+          if (!mounted) return;
+          Navigator.of(context).pop(); // Fecha o diálogo
+          _mostrarSnackBar(
+            'Sem conexão com a internet. Usando dados locais.',
+            Colors.orange[700]!
+          );
+        }
+        return;
+      }
+
+      // Sincroniza todos os dados
+      final syncResult = await _syncService.sincronizarTodosDados();
+
+      if (mostrarUI && mounted) {
+        Navigator.of(context).pop(); // Fecha o diálogo
+      }
+
+      if (syncResult.isSuccess) {
+        if (mostrarUI && mounted) {
+          _mostrarSnackBar(
+            'Sincronização concluída: ${syncResult.totalCount} registros atualizados',
+            primaryColor
+          );
+        }
+      } else {
+        if (mostrarUI && mounted) {
+          _mostrarSnackBar(
+            'Erro na sincronização: ${syncResult.errorMessage}',
+            Colors.red[700]!
+          );
+        }
+      }
+    } catch (e) {
+      if (mostrarUI && mounted) {
+        Navigator.of(context).pop(); // Fecha o diálogo
+        _mostrarSnackBar(
+          'Erro durante a sincronização: ${_getFriendlyErrorMessage(e)}',
+          Colors.red[700]!
+        );
+      }
+    } finally {
+      if (mostrarUI) {
+        setState(() {
+          isSyncing = false;
+        });
+      }
+    }
+    
+    return; // Add explicit return statement
+  }
 
   Future<void> carregarClientesLocal() async {
     setState(() {
@@ -306,7 +378,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: _buildAppBar(),
       drawer: AppDrawer(
         clearAllTables: _handleClearAllData,
-        syncAllTables: , // Passando função vazia para atender ao requisito
+        syncAllTables: () => _sincronizarDados(mostrarUI: true),
       ),
       body: Column(
         children: [
@@ -314,7 +386,11 @@ class _HomeScreenState extends State<HomeScreen> {
           Divider(height: 1, thickness: 1, color: Colors.grey[200]),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: carregarClientesLocal,
+              onRefresh: () async {
+                // Ao fazer pull-to-refresh, sincroniza e atualiza
+                await _sincronizarDados(mostrarUI: true);
+                await carregarClientesLocal();
+              },
               color: primaryColor,
               child: _buildMainContent(),
             ),
@@ -343,8 +419,13 @@ class _HomeScreenState extends State<HomeScreen> {
       elevation: 0,
       actions: [
         IconButton(
+          icon: const Icon(Icons.sync),
+          tooltip: 'Sincronizar',
+          onPressed: () => _sincronizarDados(mostrarUI: true),
+        ),
+        IconButton(
           icon: const Icon(Icons.refresh),
-          tooltip: 'Recarregar',
+          tooltip: 'Recarregar dados locais',
           onPressed: carregarClientesLocal,
         ),
       ],

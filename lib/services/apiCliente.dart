@@ -12,7 +12,7 @@ class ClienteService {
   ClienteService({ApiClient? apiClient})
       : _apiClient = apiClient ??
             ApiClient(
-              baseUrl: 'http://duotectecnologia.com.br/v1/',
+              baseUrl: 'http://duotectecnologia.com.br:8082/v1/',
               empresaId: '001',
               dataReferencia: '31.01.1980',
             );
