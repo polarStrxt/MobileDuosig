@@ -22,21 +22,31 @@ class ProdutoService {
       '$_endpointBaseProduto/${_apiClient.empresaId}/${_apiClient.dataReferencia}';
 
   /// Busca todos os produtos disponíveis
-  ///
-  /// Retorna um [ApiResult] contendo a lista de produtos ou um erro
-  Future<ApiResult<List<Produto>>> buscarProdutos() async {
-    final result = await _apiClient.get<dynamic>(
+///
+/// Retorna um [ApiResult] contendo a lista de produtos ou um erro
+Future<ApiResult<List<Produto>>> buscarProdutos() async {
+  try {
+    final response = await _apiClient.get(
       _endpointPadrao,
-      fromJson: (json) {
-        if (json is List) {
-          return json.map((item) => Produto.fromJson(item)).toList();
-        }
-        throw FormatException('Formato de resposta inválido para lista de produtos');
-      },
     );
 
-    return result as ApiResult<List<Produto>>;
+    if (!response.isSuccess) {
+      return ApiResult.error(response.errorMessage);
+    }
+    
+    // Garantir que estamos lidando com uma lista
+    final dynamic jsonData = response.data;
+    if (jsonData is! List) {
+      return ApiResult.error("Formato de resposta inválido: esperada lista de produtos");
+    }
+    
+    // Converter manualmente para garantir o tipo correto
+    final produtos = jsonData.map((item) => Produto.fromJson(item)).toList();
+    return ApiResult<List<Produto>>.success(produtos);
+  } catch (e) {
+    return ApiResult.error("Erro ao processar produtos: $e");
   }
+}
 
   /// Busca um produto específico pelo código
   ///

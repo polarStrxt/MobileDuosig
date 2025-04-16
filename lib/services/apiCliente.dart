@@ -6,13 +6,13 @@ class ClienteService {
   final ApiClient _apiClient;
 
   /// Constantes para endpoints
-  static const String _endpointBaseCliente = 'cliente';
+  static const String _endpointBaseCliente = '/v1/cliente';
 
   /// Construtor que aceita um cliente API customizado ou cria um padrão
   ClienteService({ApiClient? apiClient})
       : _apiClient = apiClient ??
             ApiClient(
-              baseUrl: 'http://duotectecnologia.com.br:8082/v1/',
+              baseUrl: 'http://duotecsuprilev.ddns.com.br:8082 ',
               empresaId: '001',
               dataReferencia: '31.01.1980',
             );

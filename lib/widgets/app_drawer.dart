@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_docig_venda/screens/carrinhoaberto.dart';
 
 /// A custom drawer widget providing application navigation and system actions.
 ///
@@ -53,6 +54,7 @@ class _AppDrawerState extends State<AppDrawer> {
                 padding: EdgeInsets.zero,
                 children: [
                   _buildSyncOption(),
+                  _buildCarrinhoAbertoOption(),
                   _buildClearTablesOption(),
                   const Divider(height: 1),
                   _buildAboutOption(),
@@ -126,6 +128,24 @@ class _AppDrawerState extends State<AppDrawer> {
       ),
     );
   }
+
+  Widget _buildCarrinhoAbertoOption() {
+  return _buildDrawerTile(
+    icon: Icons.shopping_cart_rounded,
+    iconColor: _primaryColor,
+    title: 'Carrinho Aberto',
+    subtitle: 'Clientes com carrinho não finalizado',
+    onTap: () {
+      Navigator.pop(context);
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const ClientesComCarrinhoScreen(),
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildSyncOption() {
     return _buildDrawerTile(

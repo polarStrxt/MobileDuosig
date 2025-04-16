@@ -38,8 +38,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Inicia a sincronização e depois carrega os dados locais
-    _sincronizarDados(mostrarUI: false).then((_) => carregarClientesLocal());
+    // Primeiro carrega dados locais, depois sincroniza apenas se necessário
+    carregarClientesLocal().then((_) {
+      // Sincroniza apenas se não houver dados locais
+      if (clientes.isEmpty) {
+        _sincronizarDados(mostrarUI: false);
+      }
+    });
   }
 
   @override
@@ -87,6 +92,9 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (syncResult.isSuccess) {
+        // Recarrega dados locais após sincronização bem-sucedida
+        await carregarClientesLocal();
+        
         if (mostrarUI && mounted) {
           _mostrarSnackBar(
             'Sincronização concluída: ${syncResult.totalCount} registros atualizados',
@@ -117,7 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     
-    return; // Add explicit return statement
+    return;
   }
 
   Future<void> carregarClientesLocal() async {
@@ -149,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     }
     
-    return; // Add explicit return statement
+    return;
   }
 
   void _buildSearchIndex(List<Cliente> listaClientes) {
@@ -190,7 +198,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Colors.red[700]!);
     }
     
-    return; // Add explicit return statement
+    return;
   }
 
   Future<void> _handleDeleteCliente(String codcli) async {
@@ -240,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Colors.red[700]!);
     }
     
-    return; // Add explicit return statement
+    return;
   }
 
   Future<void> _handleClearAllData() async {
@@ -293,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _mostrarSnackBar('Erro ao limpar dados', Colors.red[700]!);
     }
     
-    return; // Add explicit return statement to fix the error
+    return;
   }
 
   // MÉTODOS PARA UI
