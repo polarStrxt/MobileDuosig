@@ -5,6 +5,7 @@ import 'package:flutter_docig_venda/screens/produtoScreen.dart';
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/screens/dupricata.dart';
+import 'package:flutter_docig_venda/screens/codigoScreen.dart'; // Importação da nova tela
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
@@ -324,22 +325,36 @@ class Infocliente extends StatelessWidget {
   }
 
   Widget _buildActionButtons(BuildContext context) {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: CustomButton(
-            text: "Duplicatas",
-            icon: Icons.receipt_long,
-            onPressed: () => _handleDuplicatasButtonPress(context),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: CustomButton(
+                text: "Duplicatas",
+                icon: Icons.receipt_long,
+                onPressed: () => _handleDuplicatasButtonPress(context),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: CustomButton(
+                text: "Produtos",
+                icon: Icons.shopping_cart,
+                onPressed: () => _handleProdutosButtonPress(context),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: CustomButton(
-            text: "Produtos",
-            icon: Icons.shopping_cart,
-            onPressed: () => _handleProdutosButtonPress(context),
-          ),
+        
+        // Adicionado um espaçamento vertical para separação dos botões
+        const SizedBox(height: 12),
+        
+        // Novo botão para adicionar produtos individualmente
+        CustomButton(
+          text: "Adicionar Produto Individual",
+          icon: Icons.add_shopping_cart,
+          onPressed: () => _handleAdicionarProdutoPress(context),
         ),
       ],
     );
@@ -424,6 +439,16 @@ class Infocliente extends StatelessWidget {
       context,
       MaterialPageRoute(
         builder: (context) => ProdutoScreen(cliente: cliente),
+      ),
+    );
+  }
+
+  // Novo método para lidar com o botão de adicionar produto individual
+  void _handleAdicionarProdutoPress(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdicionarProdutoScreen(cliente: cliente),
       ),
     );
   }

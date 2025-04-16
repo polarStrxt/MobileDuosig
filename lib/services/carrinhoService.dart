@@ -4,45 +4,64 @@ import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
 import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
+import 'package:flutter_docig_venda/services/api_client.dart'; // Para usar ApiResult
 
+/// Serviço responsável por gerenciar operações de carrinho de compras
 class CarrinhoService {
-  final CarrinhoDao _carrinhoDao = CarrinhoDao();
-  final ProdutoDao _produtoDao = ProdutoDao();
+  final CarrinhoDao _carrinhoDao;
+  final ProdutoDao _produtoDao;
 
-  // Salvar o carrinho atual no banco de dados
-  Future<void> salvarCarrinho(Carrinho carrinho, Cliente? cliente) async {
-    if (cliente == null) {
-      print("⚠️ Não é possível salvar o carrinho sem um cliente associado");
-      return;
-    }
+  /// Construtor que permite injeção de dependências para testes
+  CarrinhoService({
+    CarrinhoDao? carrinhoDao,
+    ProdutoDao? produtoDao,
+  })  : _carrinhoDao = carrinhoDao ?? CarrinhoDao(),
+        _produtoDao = produtoDao ?? ProdutoDao();
 
-    if (carrinho.itens.isEmpty) {
-      print("🛒 Carrinho vazio. Nada para salvar.");
-      return;
-    }
+  /// Salva o carrinho atual no banco de dados
+  ///
+  /// [carrinho] O carrinho a ser salvo
+  /// [cliente] O cliente associado ao carrinho
+  /// Retorna um [ApiResult] indicando sucesso ou erro na operação
+  Future<ApiResult<bool>> salvarCarrinho(Carrinho carrinho, Cliente? cliente) async {
+    try {
+      if (cliente == null) {
+        return ApiResult.error("Não é possível salvar o carrinho sem um cliente associado");
+      }
 
-    for (var entry in carrinho.itens.entries) {
-      Produto produto = entry.key;
-      int quantidade = entry.value;
-      double desconto = carrinho.descontos[produto] ?? 0.0;
+      if (carrinho.itens.isEmpty) {
+        return ApiResult.success(true); // Sucesso, mas nada para salvar
+      }
 
-      CarrinhoItem item = CarrinhoItem(
-        codprd: produto.codprd,
-        codcli: cliente.codcli,
-        quantidade: quantidade,
-        desconto: desconto,
-      );
+      for (var entry in carrinho.itens.entries) {
+        Produto produto = entry.key;
+        int quantidade = entry.value;
+        double desconto = carrinho.descontos[produto] ?? 0.0;
 
-      await _carrinhoDao.salvarItem(item);
+        CarrinhoItem item = CarrinhoItem(
+          codprd: produto.codprd,
+          codcli: cliente.codcli,
+          quantidade: quantidade,
+          desconto: desconto,
+        );
+
+        await _carrinhoDao.salvarItem(item);
+      }
+
+      return ApiResult.success(true);
+    } catch (e) {
+      return ApiResult.error("Erro ao salvar carrinho: $e");
     }
   }
 
-  // Recuperar um carrinho do banco de dados
-  Future<Map<String, dynamic>> recuperarCarrinho(Cliente cliente) async {
+  /// Recupera um carrinho do banco de dados
+  ///
+  /// [cliente] O cliente cujo carrinho será recuperado
+  /// Retorna um [ApiResult] contendo os itens e descontos do carrinho
+  Future<ApiResult<Map<String, dynamic>>> recuperarCarrinho(Cliente cliente) async {
     try {
       print("🔍 Recuperando carrinho do cliente ${cliente.codcli}...");
-      List<CarrinhoItem> itens =
-          await _carrinhoDao.getItensCliente(cliente.codcli);
+      List<CarrinhoItem> itens = await _carrinhoDao.getItensCliente(cliente.codcli);
 
       Map<Produto, int> carrinhoItens = {};
       Map<Produto, double> descontos = {};
@@ -56,27 +75,53 @@ class CarrinhoService {
         }
       }
 
-      return {'itens': carrinhoItens, 'descontos': descontos};
+      return ApiResult.success({
+        'itens': carrinhoItens,
+        'descontos': descontos
+      });
     } catch (e) {
       print("❌ Erro ao recuperar carrinho: $e");
-      return {'itens': <Produto, int>{}, 'descontos': <Produto, double>{}};
+      return ApiResult.error("Erro ao recuperar carrinho: $e");
     }
   }
 
-  // Finalizar um carrinho
-  Future<void> finalizarCarrinho(Cliente cliente) async {
-    await _carrinhoDao.finalizarCarrinho(cliente.codcli);
+  /// Finaliza um carrinho
+  ///
+  /// [cliente] O cliente cujo carrinho será finalizado
+  /// Retorna um [ApiResult] indicando sucesso ou erro na operação
+  Future<ApiResult<bool>> finalizarCarrinho(Cliente cliente) async {
+    try {
+      await _carrinhoDao.finalizarCarrinho(cliente.codcli);
+      return ApiResult.success(true);
+    } catch (e) {
+      return ApiResult.error("Erro ao finalizar carrinho: $e");
+    }
   }
 
-  // Limpar o carrinho de um cliente
-  Future<void> limparCarrinho(Cliente cliente) async {
-    await _carrinhoDao.limparCarrinho(cliente.codcli);
+  /// Limpa o carrinho de um cliente
+  ///
+  /// [cliente] O cliente cujo carrinho será limpo
+  /// Retorna um [ApiResult] indicando sucesso ou erro na operação
+  Future<ApiResult<bool>> limparCarrinho(Cliente cliente) async {
+    try {
+      await _carrinhoDao.limparCarrinho(cliente.codcli);
+      return ApiResult.success(true);
+    } catch (e) {
+      return ApiResult.error("Erro ao limpar carrinho: $e");
+    }
   }
 
-  // Verificar se um cliente tem um carrinho não finalizado
-  Future<bool> clienteTemCarrinho(Cliente cliente) async {
-    List<CarrinhoItem> itens = await _carrinhoDao
-        .getItensCliente(cliente.codcli, apenasNaoFinalizados: true);
-    return itens.isNotEmpty;
+  /// Verifica se um cliente tem um carrinho não finalizado
+  ///
+  /// [cliente] O cliente a ser verificado
+  /// Retorna um [ApiResult] indicando se o cliente tem um carrinho ativo
+  Future<ApiResult<bool>> clienteTemCarrinho(Cliente cliente) async {
+    try {
+      List<CarrinhoItem> itens = await _carrinhoDao
+          .getItensCliente(cliente.codcli, apenasNaoFinalizados: true);
+      return ApiResult.success(itens.isNotEmpty);
+    } catch (e) {
+      return ApiResult.error("Erro ao verificar carrinho: $e");
+    }
   }
 }

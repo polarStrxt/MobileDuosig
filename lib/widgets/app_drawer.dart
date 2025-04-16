@@ -293,6 +293,8 @@ class _AppDrawerState extends State<AppDrawer> {
         duration: _longSnackBarDuration,
       );
     }
+    
+    return; // Add explicit return statement
   }
 
   /// Confirmation dialog for clearing tables
@@ -375,6 +377,8 @@ class _AppDrawerState extends State<AppDrawer> {
         duration: _longSnackBarDuration,
       );
     }
+    
+    return; // Add explicit return statement
   }
 
   /// About dialog showing application information

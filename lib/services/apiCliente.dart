@@ -1,47 +1,54 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/services/api_client.dart'; // Referência à classe que criamos anteriormente
 
+/// Serviço responsável por gerir operações relacionadas a clientes
 class ClienteService {
-  static const String baseUrl =
-      "http://duotecsuprilev.ddns.com.br:8082/v1/cliente/001/31.01.1980";
+  final ApiClient _apiClient;
 
-  /// 🔹 Busca um único cliente por ID e data de nascimento
-  static Future<Cliente?> buscarCliente(
-      String id, String dataNascimento) async {
-    try {
-      final url = Uri.parse("$baseUrl/$id/$dataNascimento");
-      final response = await http.get(url);
+  /// Constantes para endpoints
+  static const String _endpointBaseCliente = 'cliente';
 
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> jsonResponse = json.decode(response.body);
-        return Cliente.fromJson(jsonResponse);
-      } else {
-        print("❌ Erro: ${response.statusCode} - ${response.body}");
-        return null;
-      }
-    } catch (e) {
-      print("❌ Erro na requisição: $e");
-      return null;
-    }
+  /// Construtor que aceita um cliente API customizado ou cria um padrão
+  ClienteService({ApiClient? apiClient})
+      : _apiClient = apiClient ??
+            ApiClient(
+              baseUrl: 'http://duotectecnologia.com.br/v1/',
+              empresaId: '001',
+              dataReferencia: '31.01.1980',
+            );
+
+  /// Retorna o endpoint com os parâmetros padrão
+  String get _endpointPadrao =>
+      '$_endpointBaseCliente/${_apiClient.empresaId}/${_apiClient.dataReferencia}';
+
+  /// Busca um cliente específico pelo ID e data de nascimento
+  ///
+  /// [id] O código único do cliente
+  /// [dataNascimento] A data de nascimento do cliente no formato DD.MM.AAAA
+  /// Retorna um [ApiResult] contendo o cliente ou um erro
+  Future<ApiResult<Cliente?>> buscarCliente(String id, String dataNascimento) async {
+    final result = await _apiClient.get<Cliente?>(
+      '$_endpointPadrao/$id/$dataNascimento',
+      fromJson: (json) => json != null ? Cliente.fromJson(json) : null,
+    );
+
+    return result;
   }
 
-  /// 🔹 Busca todos os clientes da API
-  static Future<List<Cliente>> buscarClientes() async {
-    try {
-      final url = Uri.parse(baseUrl); // 🔹 Pega todos os clientes
-      final response = await http.get(url);
+  /// Busca todos os clientes disponíveis
+  ///
+  /// Retorna um [ApiResult] contendo a lista de clientes ou um erro
+  Future<ApiResult<List<Cliente>>> buscarClientes() async {
+    final result = await _apiClient.get<List<Cliente>>(
+      _endpointPadrao,
+      fromJson: (json) {
+        if (json is List) {
+          return json.map((item) => Cliente.fromJson(item)).toList();
+        }
+        return <Cliente>[];
+      },
+    );
 
-      if (response.statusCode == 200) {
-        final List<dynamic> jsonResponse = json.decode(response.body);
-        return jsonResponse.map((data) => Cliente.fromJson(data)).toList();
-      } else {
-        print("❌ Erro: ${response.statusCode} - ${response.body}");
-        return [];
-      }
-    } catch (e) {
-      print("❌ Erro na requisição: $e");
-      return [];
-    }
+    return result;
   }
 }

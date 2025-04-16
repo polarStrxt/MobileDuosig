@@ -1,72 +1,34 @@
-// Arquivo: lib/home/apiDuplicata.dart
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
+import 'package:flutter_docig_venda/services/api_client.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
-class DuplicataApi {
-  // Configurações da API
-  static String baseUrl = "http://duotecsuprilev.ddns.com.br:8082";
-  static const String _empresaId = "001";
-  static const String _dataBase =
-      "31.01.1980"; // Considere usar um valor mais dinâmico
+/// Serviço responsável pelas operações relacionadas a duplicatas
+class DuplicataService {
+  final ApiClient _apiClient;
+  final bool usarDadosExemplo;
 
-  // Timeout para requisições
-  static const Duration _timeout = Duration(seconds: 15);
+  /// Constantes para endpoints
+  static const String _endpointBaseFinanceiro = '/v1/financeiro';
+  static const String _endpointBaseDuplicata = '/v1/duplicata';
 
-  // Cliente HTTP reutilizável para melhor performance
-  static final http.Client _client = http.Client();
+  /// Construtor que aceita um cliente API customizado ou cria um padrão
+  DuplicataService({
+    ApiClient? apiClient,
+    this.usarDadosExemplo = false,
+  }) : _apiClient = apiClient ??
+            ApiClient(
+              baseUrl: 'http://duotecsuprilev.ddns.com.br:8082',
+              empresaId: '001',
+              dataReferencia: '31.01.1980',
+              timeout: const Duration(seconds: 15),
+            );
 
-  // Habilitar ou desabilitar logs
-  static bool enableLogs = true;
-
-  // Método auxiliar para logs
-  static void _log(String message) {
-    if (enableLogs && kDebugMode) {
-      print(message);
-    }
-  }
-
-  /// Método auxiliar para fazer requisições HTTP com tratamento de erros padronizado
-  static Future<Map<String, dynamic>> _getRequest(Uri url) async {
-    try {
-      _log("🔍 Requisição GET: $url");
-
-      final response = await _client.get(
-        url,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      ).timeout(_timeout);
-
-      _log("📡 Status: ${response.statusCode}");
-
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'data': json.decode(response.body),
-          'statusCode': response.statusCode
-        };
-      } else {
-        return {
-          'success': false,
-          'message': 'Erro HTTP ${response.statusCode}',
-          'statusCode': response.statusCode,
-          'body': response.body
-        };
-      }
-    } catch (e) {
-      _log("❌ Exceção na requisição: $e");
-      return {
-        'success': false,
-        'message': e.toString(),
-        'statusCode': 0,
-      };
-    }
-  }
+  /// Retorna o endpoint financeiro com os parâmetros padrão
+  String get _endpointFinanceiro =>
+      '$_endpointBaseFinanceiro/${_apiClient.empresaId}/${_apiClient.dataReferencia}';
 
   /// Método para criar duplicatas de exemplo para testes
-  static List<Duplicata> _criarDuplicatasExemplo(int codcli) {
+  List<Duplicata> _criarDuplicatasExemplo(int codcli) {
     _log("⚠️ Criando duplicatas de exemplo para cliente $codcli");
     return [
       Duplicata(
@@ -90,100 +52,100 @@ class DuplicataApi {
     ];
   }
 
-  /// Busca duplicatas por código do cliente
-  static Future<List<Duplicata>> buscarDuplicatasPorCliente(int codcli,
-      {bool usarDadosExemplo = false}) async {
-    // URL para buscar duplicatas
-    final url = Uri.parse("$baseUrl/v1/financeiro/$_empresaId/$_dataBase");
+  /// Método auxiliar para logs
+  void _log(String message) {
+    if (kDebugMode) {
+      print(message);
+    }
+  }
 
+  /// Busca duplicatas por código do cliente
+  Future<ApiResult<List<Duplicata>>> buscarDuplicatasPorCliente(int codcli) async {
     // Se estiver no modo de dados de exemplo, retorna dados simulados
     if (usarDadosExemplo) {
-      return _criarDuplicatasExemplo(codcli);
+      return ApiResult.success(_criarDuplicatasExemplo(codcli));
     }
 
-    // Fazer a requisição utilizando o método auxiliar
-    final response = await _getRequest(url);
+    // Fazer a requisição utilizando o ApiClient
+    final result = await _apiClient.get<List<dynamic>>(
+      _endpointFinanceiro,
+      fromJson: (jsonResponse) {
+        if (jsonResponse is List) {
+          // Converter e filtrar apenas duplicatas do cliente específico
+          final duplicatas = jsonResponse
+              .map((item) => Duplicata.fromJson(item))
+              .where((duplicata) => duplicata.codcli == codcli)
+              .toList();
 
-    if (response['success']) {
-      final List<dynamic> jsonResponse = response['data'];
+          _log("📊 Total de duplicatas encontradas para o cliente $codcli: ${duplicatas.length}");
 
-      // Converter e filtrar apenas duplicatas do cliente específico
-      final duplicatas = jsonResponse
-          .map((item) => Duplicata.fromJson(item))
-          .where((duplicata) => duplicata.codcli == codcli)
-          .toList();
+          // Se não encontrou nenhuma duplicata e está habilitado para usar dados de exemplo
+          if (duplicatas.isEmpty && usarDadosExemplo) {
+            return _criarDuplicatasExemplo(codcli);
+          }
 
-      _log(
-          "📊 Total de duplicatas encontradas para o cliente $codcli: ${duplicatas.length}");
+          return duplicatas;
+        }
+        return <Duplicata>[];
+      },
+    );
 
-      // Se não encontrou nenhuma duplicata, pode retornar dados de exemplo
-      if (duplicatas.isEmpty && usarDadosExemplo) {
-        return _criarDuplicatasExemplo(codcli);
-      }
-
-      return duplicatas;
-    } else {
-      _log("❌ Erro ao buscar duplicatas: ${response['message']}");
-
-      // Se falhou com 404, retorna dados de exemplo se habilitado
-      if (response['statusCode'] == 404 && usarDadosExemplo) {
-        return _criarDuplicatasExemplo(codcli);
-      }
-
-      return [];
+    // Se houve erro e estamos permitindo usar dados de exemplo, retornamos o fallback
+    if (!result.isSuccess && usarDadosExemplo) {
+      return ApiResult.success(_criarDuplicatasExemplo(codcli));
     }
+
+    return result as ApiResult<List<Duplicata>>;
   }
 
   /// Busca uma única duplicata por ID
-  static Future<Duplicata?> buscarDuplicataPorId(String numdoc) async {
-    final url = Uri.parse("$baseUrl/v1/duplicata/$numdoc");
+  Future<ApiResult<Duplicata?>> buscarDuplicataPorId(String numdoc) async {
+    final result = await _apiClient.get<Duplicata?>(
+      '$_endpointBaseDuplicata/$numdoc',
+      fromJson: (json) => json != null ? Duplicata.fromJson(json) : null,
+    );
 
-    final response = await _getRequest(url);
-
-    if (response['success']) {
-      final Map<String, dynamic> jsonResponse = response['data'];
-      return Duplicata.fromJson(jsonResponse);
-    } else {
-      _log("❌ Erro ao buscar duplicata $numdoc: ${response['message']}");
-      return null;
-    }
+    return result;
   }
 
   /// Busca todas as duplicatas
-  static Future<List<Duplicata>> buscarDuplicatas(
-      {bool usarDadosExemplo = false}) async {
-    final url = Uri.parse("$baseUrl/v1/financeiro/$_empresaId/$_dataBase");
+  Future<ApiResult<List<Duplicata>>> buscarDuplicatas() async {
+    // Fazer a requisição utilizando o ApiClient
+    final result = await _apiClient.get<List<Duplicata>>(
+      _endpointFinanceiro,
+      fromJson: (jsonResponse) {
+        if (jsonResponse is List) {
+          // Converter os dados para a lista de Duplicatas
+          final duplicatas = jsonResponse
+              .map((item) => Duplicata.fromJson(item))
+              .toList();
 
-    // Fazer a requisição utilizando o método auxiliar
-    final response = await _getRequest(url);
+          _log("📊 Total de duplicatas encontradas: ${duplicatas.length}");
+          return duplicatas;
+        }
+        
+        // Se habilitado para usar dados de exemplo e a resposta não é uma lista
+        if (usarDadosExemplo) {
+          return [
+            ..._criarDuplicatasExemplo(1001),
+            ..._criarDuplicatasExemplo(1002),
+            ..._criarDuplicatasExemplo(1003),
+          ];
+        }
+        
+        return <Duplicata>[];
+      },
+    );
 
-    if (response['success']) {
-      final List<dynamic> jsonResponse = response['data'];
-
-      // Converter os dados para a lista de Duplicatas
-      final duplicatas =
-          jsonResponse.map((item) => Duplicata.fromJson(item)).toList();
-
-      _log("📊 Total de duplicatas encontradas: ${duplicatas.length}");
-      return duplicatas;
-    } else {
-      _log("❌ Erro ao buscar duplicatas: ${response['message']}");
-
-      // Se habilitado, retorna alguns dados de exemplo
-      if (usarDadosExemplo) {
-        return [
-          ..._criarDuplicatasExemplo(1001),
-          ..._criarDuplicatasExemplo(1002),
-          ..._criarDuplicatasExemplo(1003),
-        ];
-      }
-
-      return [];
+    // Se houve erro e estamos permitindo usar dados de exemplo, retornamos o fallback
+    if (!result.isSuccess && usarDadosExemplo) {
+      return ApiResult.success([
+        ..._criarDuplicatasExemplo(1001),
+        ..._criarDuplicatasExemplo(1002),
+        ..._criarDuplicatasExemplo(1003),
+      ]);
     }
-  }
 
-  /// Fecha o cliente HTTP quando não for mais necessário
-  static void dispose() {
-    _client.close();
+    return result as ApiResult<List<Duplicata>>;
   }
 }

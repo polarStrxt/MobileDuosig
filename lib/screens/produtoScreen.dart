@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/services/apiProduto.dart';
 import 'package:flutter_docig_venda/widgets/cardProdutos.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/screens/carrinhoScreen.dart';
@@ -36,6 +35,7 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   bool _isSearching = false;
   bool _isSyncing = false;
   String? _errorMessage;
+  bool _usandoDadosExemplo = false;
 
   // DAOs
   final ProdutoDao _produtoDao = ProdutoDao();
@@ -228,6 +228,41 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
     }
   }
 
+  // Função para gerar produtos de exemplo localmente
+  List<Produto> _gerarProdutosExemplo() {
+    // Criar 20 produtos de exemplo
+    return List.generate(20, (index) {
+      final codprd = 1000 + index;
+      final dcrprd = "Produto Exemplo ${index + 1}";
+      final marca = ["Marca A", "Marca B", "Marca C", "Marca D"][index % 4];
+      final preco = (10.0 + (index * 5.75)) * (1 + (index % 3) * 0.1);
+      final estoque = (50 + (index * 7)) % 200;
+      
+      // Ajustando o construtor conforme a definição real da classe Produto
+      return Produto(
+        codprd: codprd,
+        dcrprd: dcrprd,
+        nommrc: marca,
+        // Parâmetros como definidos na classe
+        staati: index % 10 == 0 ? "I" : "A", // A = Ativo, I = Inativo
+        qtdmulvda: 1,
+        vlrbasvda: preco,
+        qtdetq: estoque, // Opcional
+        vlrpmcprd: preco * 0.85,
+        dtaini: null, // Opcional
+        dtafin: null, // Opcional
+        vlrtab1: preco,
+        vlrtab2: preco * 1.1,
+        peracrdsc1: 5.0,
+        peracrdsc2: 10.0,
+        codundprd: "UN",
+        vol: ((index % 5) + 1), // De 1 a 5
+        qtdvol: 1,
+        perdscmxm: 15.0,
+      );
+    });
+  }
+
   Future<void> _sincronizarProdutos() async {
     setState(() {
       _isSyncing = true;
@@ -235,10 +270,12 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
     });
 
     try {
-      List<Produto> produtosApi = await ProdutoService.buscarProdutos();
+      // Gerar produtos de exemplo localmente em vez de buscar da API
+      List<Produto> produtosExemplo = _gerarProdutosExemplo();
+      
       await _produtoDao.clearTable();
 
-      for (var produto in produtosApi) {
+      for (var produto in produtosExemplo) {
         await _produtoDao.insertOrUpdate(produto.toJson(), 'codprd');
       }
 
@@ -249,24 +286,25 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
         _produtos = lista;
         _produtosFiltrados = lista;
         _isSyncing = false;
+        _usandoDadosExemplo = true;
       });
 
       if (!mounted) return;
 
       _mostrarMensagem(
-          '${produtosApi.length} produtos sincronizados com sucesso!',
+          '${produtosExemplo.length} produtos de exemplo carregados',
           cor: Colors.green[700]);
     } catch (e) {
-      debugPrint("❌ Erro ao sincronizar produtos: $e");
+      debugPrint("❌ Erro ao carregar produtos de exemplo: $e");
 
       setState(() {
         _isSyncing = false;
-        _errorMessage = 'Erro na sincronização: ${e.toString()}';
+        _errorMessage = 'Erro ao carregar exemplos: ${e.toString()}';
       });
 
       if (!mounted) return;
 
-      _mostrarMensagem('Erro ao sincronizar: ${e.toString()}',
+      _mostrarMensagem('Erro ao carregar exemplos: ${e.toString()}',
           cor: Colors.red[700]);
     }
   }
@@ -464,7 +502,7 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
                     strokeWidth: 2,
                   ))
               : Icon(Icons.sync, size: 22),
-          tooltip: 'Sincronizar',
+          tooltip: 'Carregar Exemplos',
           onPressed: _isSyncing ? null : _sincronizarProdutos,
         ),
         IconButton(
@@ -514,28 +552,50 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
       color: Colors.grey[100],
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          if (widget.cliente != null) ...[
-            Icon(Icons.list_alt, size: 14, color: Colors.grey[700]),
-            SizedBox(width: 6),
-            Text(
-              "Tabela: ${widget.cliente!.codtab}",
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey[700],
+          Row(
+            children: [
+              if (widget.cliente != null) ...[
+                Icon(Icons.list_alt, size: 14, color: Colors.grey[700]),
+                SizedBox(width: 6),
+                Text(
+                  "Tabela: ${widget.cliente!.codtab}",
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                SizedBox(width: 16),
+              ],
+              Icon(Icons.inventory_2, size: 14, color: Colors.grey[700]),
+              SizedBox(width: 6),
+              Text(
+                "${_produtosFiltrados.length}/${_produtos.length} produtos",
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+          if (_usandoDadosExemplo)
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.orange[50],
+                border: Border.all(color: Colors.orange[100]!),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                "Dados de exemplo",
+                style: TextStyle(
+                  color: Colors.orange[700],
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
-            SizedBox(width: 16),
-          ],
-          Icon(Icons.inventory_2, size: 14, color: Colors.grey[700]),
-          SizedBox(width: 6),
-          Text(
-            "${_produtosFiltrados.length}/${_produtos.length} produtos",
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey[700],
-            ),
-          ),
         ],
       ),
     );
@@ -611,7 +671,7 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
             SizedBox(height: 24),
             OutlinedButton.icon(
               icon: Icon(Icons.sync),
-              label: Text('Sincronizar'),
+              label: Text('Carregar Exemplos'),
               onPressed: _sincronizarProdutos,
             ),
           ],
@@ -655,7 +715,7 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
         Center(
           child: OutlinedButton.icon(
             icon: Icon(_isSearching ? Icons.clear : Icons.sync),
-            label: Text(_isSearching ? 'Limpar pesquisa' : 'Sincronizar'),
+            label: Text(_isSearching ? 'Limpar pesquisa' : 'Carregar Exemplos'),
             onPressed: _isSearching ? _limparPesquisa : _sincronizarProdutos,
           ),
         ),

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
-import 'package:flutter_docig_venda/services/apiDuplicata.dart';
 import 'package:flutter_docig_venda/services/dao/duplicata_dao.dart';
 
 class DuplicataScreen extends StatefulWidget {
@@ -61,9 +60,12 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
         return;
       }
 
-      // Buscar duplicatas do cliente específico
-      List<Duplicata> duplicatasDoCliente =
-          await _duplicataDao.getDuplicatasByCliente(widget.duplicata.codcli);
+      // Buscar todas as duplicatas e filtrar pelo cliente
+      List<Map<String, dynamic>> result = await db
+          .query(_duplicataDao.tableName, where: 'codcli = ?', whereArgs: [widget.duplicata.codcli]);
+      
+      List<Duplicata> duplicatasDoCliente = 
+          result.map((item) => Duplicata.fromJson(item)).toList();
 
       setState(() {
         _duplicatas = duplicatasDoCliente;
@@ -71,10 +73,55 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
       });
     } catch (e) {
       setState(() {
-        _errorMessage = "Erro ao carregar duplicatas";
+        _errorMessage = "Erro ao carregar duplicatas: ${e.toString()}";
         _isLoading = false;
       });
     }
+  }
+
+  // Função para gerar dados de exemplo localmente
+  List<Duplicata> _gerarDuplicatasExemplo() {
+    final int clienteId = widget.duplicata.codcli;
+    final now = DateTime.now();
+    
+    // Data formatada para vencimentos
+    String formatDate(DateTime date) {
+      return "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+    }
+    
+    // Criar 5 duplicatas de exemplo
+    return [
+      Duplicata(
+        codcli: clienteId,
+        numdoc: "TESTE-001-$clienteId",
+        dtavct: formatDate(now.add(Duration(days: 15))),
+        vlrdpl: 1250.00,
+      ),
+      Duplicata(
+        codcli: clienteId,
+        numdoc: "TESTE-002-$clienteId",
+        dtavct: formatDate(now.add(Duration(days: 30))),
+        vlrdpl: 2780.50,
+      ),
+      Duplicata(
+        codcli: clienteId,
+        numdoc: "TESTE-003-$clienteId",
+        dtavct: formatDate(now.subtract(Duration(days: 5))),
+        vlrdpl: 980.25,
+      ),
+      Duplicata(
+        codcli: clienteId,
+        numdoc: "TESTE-004-$clienteId",
+        dtavct: formatDate(now.add(Duration(days: 45))),
+        vlrdpl: 3200.00,
+      ),
+      Duplicata(
+        codcli: clienteId,
+        numdoc: "TESTE-005-$clienteId",
+        dtavct: formatDate(now.subtract(Duration(days: 10))),
+        vlrdpl: 1540.75,
+      ),
+    ];
   }
 
   Future<void> _sincronizarDuplicatas() async {
@@ -84,50 +131,35 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
     });
 
     try {
-      // Buscar duplicatas da API
-      List<Duplicata> duplicatasApi =
-          await DuplicataApi.buscarDuplicatas(usarDadosExemplo: true);
-
-      if (duplicatasApi.isEmpty) {
-        setState(() {
-          _isSyncing = false;
-          _errorMessage = "Não foi possível recuperar duplicatas";
-        });
-        _mostrarMensagem('Não foi possível recuperar duplicatas',
-            isError: true);
-        return;
-      }
-
-      // Verificar se são dados de exemplo
-      bool dadosSaoExemplo =
-          duplicatasApi.any((d) => d.numdoc.startsWith("TESTE"));
+      // Gerar duplicatas de exemplo localmente em vez de buscar da API
+      List<Duplicata> duplicatasGeradas = _gerarDuplicatasExemplo();
 
       // Salvar no banco local
-      for (var duplicata in duplicatasApi) {
+      for (var duplicata in duplicatasGeradas) {
         await _duplicataDao.insertOrUpdate(duplicata.toJson(), 'numdoc');
       }
 
-      // Recarregar duplicatas do cliente atual
-      List<Duplicata> duplicatasAtualizadas =
-          await _duplicataDao.getDuplicatasByCliente(widget.duplicata.codcli);
+      // Recarregar duplicatas do cliente atual usando query direta
+      final db = await _duplicataDao.database;
+      List<Map<String, dynamic>> result = await db
+          .query(_duplicataDao.tableName, where: 'codcli = ?', whereArgs: [widget.duplicata.codcli]);
+      
+      List<Duplicata> duplicatasAtualizadas = 
+          result.map((item) => Duplicata.fromJson(item)).toList();
 
       setState(() {
         _duplicatas = duplicatasAtualizadas;
         _isSyncing = false;
-        _usandoDadosExemplo = dadosSaoExemplo;
+        _usandoDadosExemplo = true;  // Sempre serão dados de exemplo agora
       });
 
-      _mostrarMensagem(
-          dadosSaoExemplo
-              ? 'Dados de exemplo carregados'
-              : 'Duplicatas sincronizadas',
-          isWarning: dadosSaoExemplo);
+      _mostrarMensagem('Dados de exemplo carregados', isWarning: true);
     } catch (e) {
       setState(() {
         _isSyncing = false;
-        _errorMessage = "Erro na sincronização";
+        _errorMessage = "Erro na sincronização: ${e.toString()}";
       });
-      _mostrarMensagem('Erro ao sincronizar duplicatas', isError: true);
+      _mostrarMensagem('Erro ao carregar exemplos', isError: true);
     }
   }
 
@@ -218,7 +250,7 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
                 )
               : Icon(Icons.sync),
           onPressed: _isSyncing ? null : _sincronizarDuplicatas,
-          tooltip: "Sincronizar",
+          tooltip: "Carregar Exemplos",
         ),
       ],
       bottom: PreferredSize(
@@ -229,7 +261,7 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
             Container(
               width: double.infinity,
               padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: Colors.white.withOpacity(0.1),
+              color: Colors.white.withAlpha(25),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -246,7 +278,7 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
                   Text(
                     "Código: $codigoCliente",
                     style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
+                      color: Colors.white.withAlpha(204),
                       fontSize: 12,
                     ),
                   ),
@@ -324,7 +356,7 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
           SizedBox(height: 24),
           OutlinedButton.icon(
             icon: Icon(Icons.sync),
-            label: Text("Sincronizar"),
+            label: Text("Carregar Exemplos"),
             onPressed: _sincronizarDuplicatas,
           ),
         ],
@@ -354,14 +386,14 @@ class _DuplicataScreenState extends State<DuplicataScreen> {
           ),
           SizedBox(height: 8),
           Text(
-            "Sincronize para carregar as duplicatas",
+            "Carregue os exemplos para visualizar duplicatas",
             style: TextStyle(color: Colors.grey[600], fontSize: 14),
             textAlign: TextAlign.center,
           ),
           SizedBox(height: 24),
           OutlinedButton.icon(
             icon: Icon(Icons.sync),
-            label: Text("Sincronizar"),
+            label: Text("Carregar Exemplos"),
             onPressed: _sincronizarDuplicatas,
           ),
         ],
