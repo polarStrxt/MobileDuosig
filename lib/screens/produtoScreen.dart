@@ -36,6 +36,9 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   bool _isSyncing = false;
   String? _errorMessage;
   bool _usandoDadosExemplo = false;
+  
+  // Adicionado para controlar recuperação do carrinho
+  bool _recuperacaoCarrinhoEmProgresso = false;
 
   // DAOs
   final ProdutoDao _produtoDao = ProdutoDao();
@@ -72,20 +75,34 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   // CARREGAMENTO DE DADOS
 
   Future<void> _verificarCarrinhoExistente() async {
-    if (widget.cliente == null) return;
+    if (widget.cliente == null || _recuperacaoCarrinhoEmProgresso) return;
+
+    _recuperacaoCarrinhoEmProgresso = true;
 
     try {
-      final itensCarrinho =
-          await _carrinhoDao.getItensCliente(widget.cliente!.codcli);
+      // Buscar APENAS itens não finalizados
+      final itensCarrinho = await _carrinhoDao.getItensCliente(
+        widget.cliente!.codcli,
+        apenasNaoFinalizados: true
+      );
 
-      if (itensCarrinho.isEmpty || !mounted) return;
+      if (itensCarrinho.isEmpty || !mounted) {
+        _recuperacaoCarrinhoEmProgresso = false;
+        return;
+      }
 
       final deveRecuperar = await _perguntarRecuperarCarrinho();
-      if (deveRecuperar != true) return;
+      
+      if (deveRecuperar != true) {
+        _recuperacaoCarrinhoEmProgresso = false;
+        return;
+      }
 
       await _recuperarCarrinho(itensCarrinho);
+      _recuperacaoCarrinhoEmProgresso = false;
     } catch (e) {
       debugPrint('❌ Erro ao verificar carrinho existente: $e');
+      _recuperacaoCarrinhoEmProgresso = false;
     }
   }
 
@@ -160,26 +177,54 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   }
 
   Future<void> _recuperarCarrinho(List<CarrinhoItem> itensCarrinho) async {
-    _carrinho.itens.clear();
-    _descontos.clear();
+    try {
+      // Limpar o carrinho antes de recuperar
+      _carrinho.itens.clear();
+      _descontos.clear();
 
-    for (var item in itensCarrinho) {
-      Produto? produto = await _buscarProdutoPeloCodigo(item.codprd);
-      if (produto != null) {
-        _carrinho.itens[produto] = item.quantidade;
-        if (item.desconto > 0) {
-          _descontos[produto] = item.desconto * 100;
+      // Contador para monitorar itens que não puderam ser recuperados
+      int itensComFalha = 0;
+      List<int> itensRecuperados = [];
+
+      for (var item in itensCarrinho) {
+        // Verificar se o item já foi processado para evitar duplicação
+        if (itensRecuperados.contains(item.codprd)) continue;
+        
+        Produto? produto = await _buscarProdutoPeloCodigo(item.codprd);
+        
+        if (produto != null) {
+          _carrinho.itens[produto] = item.quantidade;
+          if (item.desconto > 0) {
+            _descontos[produto] = item.desconto * 100;
+          }
+          itensRecuperados.add(item.codprd);
+        } else {
+          // Incrementar contador de falhas
+          itensComFalha++;
+          
+          // Remover itens do carrinho que não puderam ser recuperados
+          // para evitar inconsistências
+          await _carrinhoDao.removerItem(item.codprd, widget.cliente!.codcli);
         }
       }
+
+      if (!mounted) return;
+
+      setState(() {});
+
+      // Feedback com informações mais precisas
+      String mensagem = "Carrinho recuperado com sucesso! (${itensRecuperados.length} itens)";
+      if (itensComFalha > 0) {
+        mensagem += "\n${itensComFalha} item(ns) não pôde(puderam) ser recuperado(s)";
+      }
+      
+      _mostrarMensagem(mensagem, cor: Colors.green[700]);
+    } catch (e) {
+      debugPrint('❌ Erro ao recuperar carrinho: $e');
+      if (mounted) {
+        _mostrarMensagem("Erro ao recuperar carrinho: $e", cor: Colors.red[700]);
+      }
     }
-
-    if (!mounted) return;
-
-    setState(() {});
-
-    _mostrarMensagem(
-        "Carrinho recuperado com sucesso! (${itensCarrinho.length} itens)",
-        cor: Colors.green[700]);
   }
 
   Future<Produto?> _buscarProdutoPeloCodigo(int codprd) async {
@@ -325,7 +370,10 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
     }
 
     try {
+      // A classe CarrinhoDao já verifica se existe um item idêntico em salvarItem
+      // então podemos usar diretamente, sem precisar verificar antes
       final carrinhoItem = CarrinhoItem(
+        id: null, // Será preenchido pelo DAO se o item já existir
         codprd: produto.codprd,
         codcli: widget.cliente!.codcli,
         quantidade: quantidade,
@@ -347,34 +395,75 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
     setState(() {});
   }
 
-  void _irParaCarrinho() {
-    final int totalItens = _carrinho.quantidadeTotal;
+// Método modificado para lidar com o retorno da tela do carrinho
+void _irParaCarrinho() {
+  final int totalItens = _carrinho.quantidadeTotal;
 
-    if (totalItens == 0) {
-      _mostrarMensagem(
-          'O carrinho está vazio. Adicione produtos para continuar.',
-          cor: Colors.grey[800]);
-      return;
-    }
+  if (totalItens == 0) {
+    _mostrarMensagem(
+        'O carrinho está vazio. Adicione produtos para continuar.',
+        cor: Colors.grey[800]);
+    return;
+  }
 
-    if (widget.cliente == null) {
-      _mostrarMensagem('Selecione um cliente antes de visualizar o carrinho.',
-          cor: Colors.red[700]);
-      return;
-    }
+  if (widget.cliente == null) {
+    _mostrarMensagem('Selecione um cliente antes de visualizar o carrinho.',
+        cor: Colors.red[700]);
+    return;
+  }
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => CarrinhoScreen(
-          cliente: widget.cliente,
-          codcli: widget.cliente!.codcli,
-        ),
+  Navigator.push<bool>(  // Modificado para receber um valor booleano como retorno
+    context,
+    MaterialPageRoute(
+      builder: (context) => CarrinhoScreen(
+        cliente: widget.cliente,
+        codcli: widget.cliente!.codcli,
       ),
-    ).then((_) {
-      setState(() {});
-      _verificarCarrinhoExistente();
-    });
+    ),
+  ).then((deveRecarregar) {
+    // Só recarregar se o valor retornado for null ou true
+    // Se for false, significa que o carrinho foi finalizado e não deve ser recarregado
+    if (mounted && deveRecarregar != false) {
+      setState(() {
+        // Limpar o carrinho local para refletir as mudanças feitas na tela de carrinho
+        _carrinho.itens.clear();
+        _descontos.clear();
+      });
+      // Buscar itens atualizados do banco
+      _carregarItensCarrinhoAtual();
+    }
+  });
+}
+
+  // Novo método para recarregar os itens do carrinho do banco de dados
+  Future<void> _carregarItensCarrinhoAtual() async {
+    if (widget.cliente == null) return;
+
+    try {
+      List<CarrinhoItem> itensCarrinho = await _carrinhoDao.getItensCliente(
+        widget.cliente!.codcli,
+        apenasNaoFinalizados: true
+      );
+
+      _carrinho.itens.clear();
+      _descontos.clear();
+
+      for (var item in itensCarrinho) {
+        Produto? produto = await _buscarProdutoPeloCodigo(item.codprd);
+        if (produto != null) {
+          _carrinho.itens[produto] = item.quantidade;
+          if (item.desconto > 0) {
+            _descontos[produto] = item.desconto * 100;
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('❌ Erro ao carregar itens do carrinho: $e');
+    }
   }
 
   // PESQUISA E FILTRAGEM

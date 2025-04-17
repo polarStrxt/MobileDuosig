@@ -95,7 +95,7 @@ class PdfGeneratorSimples {
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
                       pw.Text(
-                        "AMBER DISTRIBUIÇÃO",
+                        "AMBAR DISTRIBUIÇÃO",
                         style: pw.TextStyle(
                           fontSize: 20,
                           fontWeight: pw.FontWeight.bold,

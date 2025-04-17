@@ -110,7 +110,7 @@ class ProdutoDetalhe extends StatelessWidget {
                           fontWeight: FontWeight.w500,
                           fontSize: 12,
                         ),
-                        maxLines: 2,
+                        maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),

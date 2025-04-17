@@ -54,7 +54,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   void _inicializar() {
-    _quantidadeController.text = '1';
+    _quantidadeController.text = '0';
     _descontoController.text = '0';
     _verificarCarrinhoExistente();
   }

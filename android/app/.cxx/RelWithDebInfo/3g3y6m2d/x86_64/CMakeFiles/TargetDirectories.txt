@@ -1,0 +1,2 @@
+C:/my project/DousigVendas-main/android/app/.cxx/RelWithDebInfo/3g3y6m2d/x86_64/CMakeFiles/edit_cache.dir
+C:/my project/DousigVendas-main/android/app/.cxx/RelWithDebInfo/3g3y6m2d/x86_64/CMakeFiles/rebuild_cache.dir

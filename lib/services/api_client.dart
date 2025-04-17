@@ -18,7 +18,7 @@ class ApiResult<T> {
       : isSuccess = false,
         data = null;
 
-  /// Verifica se o resultado contém dados (não nulos)
+  /// Verifica se o resultado contém dados (não nulos)0
   bool get hasData => data != null;
 }
 

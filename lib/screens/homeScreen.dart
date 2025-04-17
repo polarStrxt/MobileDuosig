@@ -405,15 +405,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Implementar a criação de um novo cliente
-          // Você pode adicionar uma navegação para uma tela de cadastro
-          _mostrarSnackBar('Função para adicionar clientes', primaryColor);
-        },
-        backgroundColor: primaryColor,
-        child: const Icon(Icons.add),
-      ),
     );
   }
 
