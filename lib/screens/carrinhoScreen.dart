@@ -1609,7 +1609,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         "data_pedido": dataPedido,
         "cod_cliente": widget.cliente?.codcli.toString() ?? "",
         "vlr_pedido": _totalComDesconto,
-        "cod_vendedor": "999", // Código do vendedor fixo
+        "cod_vendedor": "1", // Código do vendedor fixo
         "cod_condicao_pagto": formaPagamento,
         "observacao": observacao,
         "produtos": produtosJson,

@@ -20,7 +20,6 @@ class _LoginScreenState extends State<LoginScreen> {
     'erick:erick124',
     'victor:senha',
     'adm:adm'
-    ':'
   ];
 
   void _handleLogin() {
