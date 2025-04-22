@@ -75,36 +75,44 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
   // CARREGAMENTO DE DADOS
 
   Future<void> _verificarCarrinhoExistente() async {
-    if (widget.cliente == null || _recuperacaoCarrinhoEmProgresso) return;
+  if (widget.cliente == null || _recuperacaoCarrinhoEmProgresso) return;
 
-    _recuperacaoCarrinhoEmProgresso = true;
+  _recuperacaoCarrinhoEmProgresso = true;
 
-    try {
-      // Buscar APENAS itens não finalizados
-      final itensCarrinho = await _carrinhoDao.getItensCliente(
-        widget.cliente!.codcli,
-        apenasNaoFinalizados: true
-      );
-
-      if (itensCarrinho.isEmpty || !mounted) {
-        _recuperacaoCarrinhoEmProgresso = false;
-        return;
-      }
-
-      final deveRecuperar = await _perguntarRecuperarCarrinho();
-      
-      if (deveRecuperar != true) {
-        _recuperacaoCarrinhoEmProgresso = false;
-        return;
-      }
-
-      await _recuperarCarrinho(itensCarrinho);
+  try {
+    // Verificar explicitamente se há carrinhos pendentes
+    bool existeCarrinho = await _carrinhoDao.existeCarrinhoPendente(widget.cliente!.codcli);
+    
+    if (!existeCarrinho || !mounted) {
       _recuperacaoCarrinhoEmProgresso = false;
-    } catch (e) {
-      debugPrint('❌ Erro ao verificar carrinho existente: $e');
-      _recuperacaoCarrinhoEmProgresso = false;
+      return;
     }
+
+    // Buscar APENAS itens não finalizados
+    final itensCarrinho = await _carrinhoDao.getItensCliente(
+      widget.cliente!.codcli,
+      apenasNaoFinalizados: true
+    );
+
+    if (itensCarrinho.isEmpty || !mounted) {
+      _recuperacaoCarrinhoEmProgresso = false;
+      return;
+    }
+
+    final deveRecuperar = await _perguntarRecuperarCarrinho();
+    
+    if (deveRecuperar != true) {
+      _recuperacaoCarrinhoEmProgresso = false;
+      return;
+    }
+
+    await _recuperarCarrinho(itensCarrinho);
+    _recuperacaoCarrinhoEmProgresso = false;
+  } catch (e) {
+    debugPrint('❌ Erro ao verificar carrinho existente: $e');
+    _recuperacaoCarrinhoEmProgresso = false;
   }
+}
 
   Future<bool?> _perguntarRecuperarCarrinho() {
     return showDialog<bool>(
@@ -412,27 +420,37 @@ void _irParaCarrinho() {
     return;
   }
 
-  Navigator.push<bool>(  // Modificado para receber um valor booleano como retorno
-    context,
-    MaterialPageRoute(
-      builder: (context) => CarrinhoScreen(
-        cliente: widget.cliente,
-        codcli: widget.cliente!.codcli,
-      ),
+Navigator.push<bool>(
+  context,
+  MaterialPageRoute(
+    builder: (context) => CarrinhoScreen(
+      cliente: widget.cliente,
+      codcli: widget.cliente!.codcli,
     ),
-  ).then((deveRecarregar) {
-    // Só recarregar se o valor retornado for null ou true
-    // Se for false, significa que o carrinho foi finalizado e não deve ser recarregado
-    if (mounted && deveRecarregar != false) {
-      setState(() {
-        // Limpar o carrinho local para refletir as mudanças feitas na tela de carrinho
-        _carrinho.itens.clear();
-        _descontos.clear();
-      });
-      // Buscar itens atualizados do banco
-      _carregarItensCarrinhoAtual();
+  ),
+).then((deveRecarregar) {
+  // Se for false, significa que o carrinho foi finalizado
+  if (mounted && deveRecarregar == false) {
+    setState(() {
+      // Limpar o carrinho local
+      _carrinho.itens.clear();
+      _descontos.clear();
+    });
+    
+    // Forçar limpeza completa do banco de dados
+    if (widget.cliente != null) {
+      // Garantir que não há itens pendentes
+      _carrinhoDao.finalizarCarrinho(widget.cliente!.codcli);
+      _carrinhoDao.limparItensFinalizados(widget.cliente!.codcli);
     }
-  });
+  } else if (mounted && deveRecarregar != false) {
+    setState(() {
+      _carrinho.itens.clear();
+      _descontos.clear();
+    });
+    _carregarItensCarrinhoAtual();
+  }
+});
 }
 
   // Novo método para recarregar os itens do carrinho do banco de dados

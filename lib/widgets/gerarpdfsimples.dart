@@ -174,48 +174,23 @@ class PdfGeneratorSimples {
                   color: corFundo,
                   borderRadius: pw.BorderRadius.circular(5),
                 ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text(
-                          "Data de Emissão:",
-                          style: pw.TextStyle(
-                            fontSize: 9,
-                            color: corTexto,
-                          ),
-                        ),
-                        pw.Text(
-                          dataFormatada,
-                          style: pw.TextStyle(
-                            fontSize: 12,
-                            fontWeight: pw.FontWeight.bold,
-                            color: corSecundaria,
-                          ),
-                        ),
-                      ],
+                    pw.Text(
+                      "Data de Emissão:",
+                      style: pw.TextStyle(
+                        fontSize: 9,
+                        color: corTexto,
+                      ),
                     ),
-                    pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.end,
-                      children: [
-                        pw.Text(
-                          "Tabela de Preço:",
-                          style: pw.TextStyle(
-                            fontSize: 9,
-                            color: corTexto,
-                          ),
-                        ),
-                        pw.Text(
-                          "$tabelaPreco",
-                          style: pw.TextStyle(
-                            fontSize: 12,
-                            fontWeight: pw.FontWeight.bold,
-                            color: corSecundaria,
-                          ),
-                        ),
-                      ],
+                    pw.Text(
+                      dataFormatada,
+                      style: pw.TextStyle(
+                        fontSize: 12,
+                        fontWeight: pw.FontWeight.bold,
+                        color: corSecundaria,
+                      ),
                     ),
                   ],
                 ),

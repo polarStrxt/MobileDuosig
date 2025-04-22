@@ -1336,24 +1336,34 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   }
 
   // Método para marcar os itens como finalizados no banco de dados
-  Future<void> _finalizarItensCarrinho() async {
-    try {
-      // Usar o método específico da classe CarrinhoDao para finalizar todos os itens de uma vez
-      await _carrinhoDao.finalizarCarrinho(widget.codcli);
-      
-      // Atualiza a lista local para refletir o estado do banco de dados
-      if (!_isDisposed) {
-        setState(() {
-          for (var item in _itensCarrinho) {
-            item.finalizado = 1;
-          }
-        });
-      }
-      debugPrint('✅ Carrinho finalizado com sucesso');
-    } catch (e) {
-      debugPrint('❌ Erro ao finalizar itens: $e');
+Future<void> _finalizarItensCarrinho() async {
+  try {
+    // Marcar todos os itens como finalizados
+    int itensAtualizados = await _carrinhoDao.finalizarCarrinho(widget.codcli);
+    
+    // Para garantir limpeza, remover itens finalizados
+    await _carrinhoDao.limparItensFinalizados(widget.codcli);
+    
+    // Verificação final para garantir que não há itens pendentes
+    bool aindaExistemItens = await _carrinhoDao.existeCarrinhoPendente(widget.codcli);
+    
+    if (aindaExistemItens) {
+      debugPrint('⚠️ Atenção: Ainda existem itens não finalizados após a operação!');
+    } else {
+      debugPrint('✅ Carrinho completamente finalizado e limpo');
     }
+    
+    if (!_isDisposed) {
+      setState(() {
+        for (var item in _itensCarrinho) {
+          item.finalizado = 1;
+        }
+      });
+    }
+  } catch (e) {
+    debugPrint('❌ Erro ao finalizar itens: $e');
   }
+}
 
   // Método para gerar PDF com dados salvos antes de finalizar o carrinho
   Future<void> _gerarPDFComDadosSalvos({
@@ -1679,56 +1689,151 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     await showDialog(
       context: contextAtual,
       barrierDismissible: false,
-      builder: (BuildContext context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.green[600], size: 28),
-            const SizedBox(width: 8),
-            Text("Sucesso!", style: TextStyle(color: Colors.green[700])),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Carrinho transferido com sucesso!"),
-            const SizedBox(height: 8),
-            Text("Número do pedido: $numPedido",
-                style: const TextStyle(fontWeight: FontWeight.w500)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-              if (mounted) {
-                Navigator.of(contextAtual).pop(false);
-              }
-            },
-            child: const Text("OK"),
-          ),
-          ElevatedButton.icon(
-            icon: const Icon(Icons.picture_as_pdf, size: 18),
-            label: const Text("Gerar PDF"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF5D5CDE),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () {
-              Navigator.of(context).pop();
-              _gerarPDFComDadosSalvos(
-                itensSalvos: itensSalvos,
-                produtosSalvos: produtosSalvos,
-                descontosSalvos: descontosSalvos,
-                observacao: observacao,
-                contextAtual: contextAtual,
-                numPedido: numPedido,
-              );
-            },
-          ),
-        ],
-      ),
+      builder: (BuildContext context) {
+        // Controlador para a animação
+        return StatefulBuilder(
+          builder: (context, setState) {
+            // Inicia a animação quando o diálogo é exibido
+            return AlertDialog(
+              contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24),
+              title: Row(
+                children: [
+                  Text("Sucesso!", style: TextStyle(color: Colors.green[700])),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Animação de sucesso
+                  TweenAnimationBuilder(
+                    duration: const Duration(milliseconds: 800),
+                    tween: Tween<double>(begin: 0.0, end: 1.0),
+                    curve: Curves.elasticOut,
+                    builder: (context, double value, child) {
+                      return Container(
+                        height: 120,
+                        width: 120,
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.green[50],
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.green.withOpacity(0.2),
+                              blurRadius: 12 * value,
+                              spreadRadius: 4 * value,
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Transform.scale(
+                            scale: value,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    color: Colors.green[400],
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.check,
+                                  color: Colors.white,
+                                  size: 50,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  // Texto com fade-in
+                  TweenAnimationBuilder(
+                    duration: const Duration(milliseconds: 800),
+                    tween: Tween<double>(begin: 0.0, end: 1.0),
+                    curve: Curves.easeInOut,
+                    builder: (context, double value, child) {
+                      return Opacity(
+                        opacity: value,
+                        child: child,
+                      );
+                    },
+                    child: Column(
+                      children: [
+                        const Text(
+                          "Carrinho transferido com sucesso!",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.green[50],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.green[100]!),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.numbers, size: 18, color: Colors.green[700]),
+                              const SizedBox(width: 8),
+                              Text(
+                                "Pedido: $numPedido",
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.green[800],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    // Modificado: Sinalizar que não há necessidade de recarregar carrinho
+                    if (mounted) {
+                      Navigator.of(contextAtual).pop(false);
+                    }
+                  },
+                  child: const Text("OK"),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.picture_as_pdf, size: 18),
+                  label: const Text("Gerar PDF"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5D5CDE),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _gerarPDFComDadosSalvos(
+                      itensSalvos: itensSalvos,
+                      produtosSalvos: produtosSalvos,
+                      descontosSalvos: descontosSalvos,
+                      observacao: observacao,
+                      contextAtual: contextAtual,
+                      numPedido: numPedido,
+                    );
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

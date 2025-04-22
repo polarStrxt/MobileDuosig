@@ -79,21 +79,83 @@ class CarrinhoDao extends BaseDao {
     }
   }
 
-  Future<void> finalizarCarrinho(int codcli) async {
-    final db = await database;
-    try {
-      await db.transaction((txn) async {
-        await txn.update(
+  // Método melhorado para finalizar o carrinho
+Future<int> finalizarCarrinho(int codcli) async {
+  final db = await database;
+  int itensAtualizados = 0;
+  try {
+    await db.transaction((txn) async {
+      itensAtualizados = await txn.update(
+        tableName,
+        {'finalizado': 1},
+        where: 'codcli = ? AND finalizado = 0',
+        whereArgs: [codcli],
+      );
+    });
+    
+    print("\u2705 Carrinho finalizado para cliente $codcli. $itensAtualizados itens atualizados.");
+    
+    // Verificar após a atualização
+    List<Map<String, dynamic>> itemsAposFinalizacao = await db.query(
+      tableName,
+      where: 'codcli = ? AND finalizado = 0',
+      whereArgs: [codcli],
+    );
+    
+    if (itemsAposFinalizacao.isNotEmpty) {
+      print("\u26A0 ATENÇÃO: Ainda existem ${itemsAposFinalizacao.length} itens não finalizados após a operação!");
+      
+      // Tentar finalizar item por item se a operação em massa falhou
+      for (var item in itemsAposFinalizacao) {
+        await db.update(
           tableName,
           {'finalizado': 1},
-          where: 'codcli = ? AND finalizado = 0',
-          whereArgs: [codcli],
+          where: 'id = ?',
+          whereArgs: [item['id']],
         );
-      });
-    } catch (e) {
-      print("\u274c Erro ao finalizar carrinho: $e");
+        itensAtualizados++;
+      }
     }
+    
+    return itensAtualizados;
+  } catch (e) {
+    print("\u274c Erro ao finalizar carrinho: $e");
+    return 0;
   }
+}
+
+// Novo método para limpar todos os itens finalizados (para evitar acumulação)
+Future<int> limparItensFinalizados(int codcli) async {
+  final db = await database;
+  try {
+    int count = await db.delete(
+      tableName,
+      where: 'codcli = ? AND finalizado = 1',
+      whereArgs: [codcli],
+    );
+    print("\u2705 Removidos $count itens finalizados para o cliente $codcli");
+    return count;
+  } catch (e) {
+    print("\u274c Erro ao limpar itens finalizados: $e");
+    return 0;
+  }
+}
+
+// Método para verificar se existe um carrinho pendente
+Future<bool> existeCarrinhoPendente(int codcli) async {
+  final db = await database;
+  try {
+    var result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableName WHERE codcli = ? AND finalizado = 0',
+      [codcli]
+    );
+    int count = Sqflite.firstIntValue(result) ?? 0;
+    return count > 0;
+  } catch (e) {
+    print("\u274c Erro ao verificar carrinho pendente: $e");
+    return false;
+  }
+}
 
   Future<bool> removerItem(int codprd, int codcli) async {
     final db = await database;
