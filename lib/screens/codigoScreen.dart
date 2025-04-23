@@ -238,7 +238,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
       setState(() {
         _produtoSelecionado = null;
         _codigoProdutoController.clear();
-        _quantidadeController.text = '1';
+        _quantidadeController.text = '0';
         _descontoController.text = '0';
       });
 
