@@ -300,6 +300,23 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
     debugPrint('❌ $mensagem: $erro');
   }
 
+  // Função para obter o valor do produto de acordo com a tabela de preço do cliente
+  double _getValorProdutoTabela(Produto produto) {
+    if (widget.cliente == null) {
+      return produto.vlrbasvda; // Valor padrão se não houver cliente
+    }
+
+    // Verificar qual tabela de preço usar com base no codtab do cliente
+    switch (widget.cliente!.codtab) {
+      case 1:
+        return produto.vlrtab1 ?? produto.vlrbasvda;
+      case 2:
+        return produto.vlrtab2 ?? produto.vlrbasvda;
+      default:
+        return produto.vlrbasvda; // Valor padrão para outras tabelas
+    }
+  }
+
   // UI
 
   @override
@@ -521,7 +538,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "R\$ ${produto.vlrbasvda.toStringAsFixed(2)}", // vlrbasvda em vez de prcven
+                  "R\$ ${_getValorProdutoTabela(produto).toStringAsFixed(2)}",
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
