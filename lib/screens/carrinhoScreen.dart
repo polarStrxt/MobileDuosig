@@ -1317,11 +1317,14 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                     final String obs = observacao;
                     final String codPagto =
                         formaPagamentoSelecionada?.codcndpgt.toString() ?? '1';
+                    final String descPagto = 
+                        formaPagamentoSelecionada?.dcrcndpgt ?? 'A VISTA';
 
                     Navigator.pop(context);
                     _transferirCarrinho(
                       observacao: obs,
                       formaPagamento: codPagto,
+                      formaPagamentoDesc: descPagto, // Added the description
                     );
                   },
                   child: const Text("Transferir"),
@@ -1422,6 +1425,30 @@ Future<void> _finalizarItensCarrinho() async {
         return;
       }
 
+      // Find the payment method description if we only have the code
+      String formaPagamentoDesc = formaPagamento;
+      if (formaPagamento.isNotEmpty && _condicoesPagamento.isNotEmpty) {
+        try {
+          // Try to convert to int to check if it's a code
+          final codeAsInt = int.tryParse(formaPagamento);
+          if (codeAsInt != null) {
+            // It's a code, find the description
+            final paymentMethod = _condicoesPagamento.firstWhere(
+              (cp) => cp.codcndpgt == codeAsInt,
+              orElse: () => CondicaoPagamento(
+                codcndpgt: codeAsInt,
+                dcrcndpgt: formaPagamento,
+                perdsccel: 0,
+                staati: "S"
+              )
+            );
+            formaPagamentoDesc = paymentMethod.dcrcndpgt;
+          }
+        } catch (e) {
+          debugPrint('⚠️ Aviso ao transformar código de pagamento: $e');
+        }
+      }
+
       // Gerar PDF com os mapas salvos
       final filePath = await PdfGeneratorSimples.gerarPdfSimples(
         produtosSalvos,
@@ -1431,7 +1458,7 @@ Future<void> _finalizarItensCarrinho() async {
         nomeVendedor,
         nomeClienteResponsavel,
         emailCliente,
-        formaPagamento,
+        formaPagamentoDesc, // Using description instead of code
         numPedido,
       );
 
@@ -1550,6 +1577,7 @@ Future<void> _finalizarItensCarrinho() async {
   Future<void> _transferirCarrinho({
     String observacao = '',
     String formaPagamento = '1',
+    String formaPagamentoDesc = 'A VISTA', // Added payment description parameter
   }) async {
     if (!mounted) return;
 
@@ -1619,8 +1647,9 @@ Future<void> _finalizarItensCarrinho() async {
         "data_pedido": dataPedido,
         "cod_cliente": widget.cliente?.codcli.toString() ?? "",
         "vlr_pedido": _totalComDesconto,
-        "cod_vendedor": "1", // Código do vendedor fixo
+        "cod_vendedor": "001", // Código do vendedor fixo
         "cod_condicao_pagto": formaPagamento,
+        "dcr_condicao_pagto": formaPagamentoDesc, // Added payment description
         "observacao": observacao,
         "produtos": produtosJson,
       };
@@ -1656,8 +1685,15 @@ Future<void> _finalizarItensCarrinho() async {
         if (!mounted) return;
 
         // Mostrar mensagem de sucesso
-        await _mostrarDialogoSucesso(contextAtual, numPedido, itensSalvos,
-            produtosSalvos, descontosSalvos, observacao);
+        await _mostrarDialogoSucesso(
+          contextAtual, 
+          numPedido, 
+          itensSalvos,
+          produtosSalvos, 
+          descontosSalvos, 
+          observacao,
+          formaPagamentoDesc, // Pass description instead of code
+        );
       } else {
         // Erro na transferência
         await _mostrarDialogoErro(contextAtual, response, dadosPedido);
@@ -1685,6 +1721,7 @@ Future<void> _finalizarItensCarrinho() async {
     Map<Produto, int> produtosSalvos,
     Map<Produto, double> descontosSalvos,
     String observacao,
+    String formaPagamentoDesc, // Add payment method description
   ) async {
     await showDialog(
       context: contextAtual,
@@ -1826,6 +1863,7 @@ Future<void> _finalizarItensCarrinho() async {
                       observacao: observacao,
                       contextAtual: contextAtual,
                       numPedido: numPedido,
+                      formaPagamento: formaPagamentoDesc, // Pass payment description
                     );
                   },
                 ),
