@@ -1,130 +1,149 @@
+// lib/widgets/carrinho.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 
 class Carrinho extends ChangeNotifier {
-  // Mapa que armazena produtos e suas quantidades
-  final Map<Produto, int> _itens = {};
+  final Map<ProdutoModel, int> _itens = {};
+  final Map<ProdutoModel, double> _descontos = {}; // Percentual
 
-  // Mapa que armazena descontos por produto (em percentual)
-  final Map<Produto, double> _descontos = {};
+  // Construtor para permitir inicialização (útil para o service)
+  Carrinho({Map<ProdutoModel, int>? itens, Map<ProdutoModel, double>? descontos}) {
+    if (itens != null) {
+      _itens.addAll(itens);
+    }
+    if (descontos != null) {
+      _descontos.addAll(descontos);
+    }
+  }
 
-  // Getter para acessar os itens
-  Map<Produto, int> get itens => _itens;
+  Map<ProdutoModel, int> get itens => Map.unmodifiable(_itens);
+  Map<ProdutoModel, double> get descontos => Map.unmodifiable(_descontos);
 
-  // Getter para acessar os descontos
-  Map<Produto, double> get descontos => _descontos;
-
-  // Quantidade total de itens no carrinho
   int get quantidadeTotal =>
       _itens.values.fold(0, (total, quantidade) => total + quantidade);
+      
+  bool get isEmpty => _itens.isEmpty;
 
-  // Valor total do carrinho sem descontos
   double calcularSubtotal(int clienteTabela) {
     double total = 0.0;
     _itens.forEach((produto, quantidade) {
-      double preco = clienteTabela == 1 ? produto.vlrtab1 : produto.vlrtab2;
+      double preco = produto.getPrecoParaTabela(clienteTabela);
       total += preco * quantidade;
     });
     return total;
   }
 
-  // Valor total dos descontos
-  double calcularTotalDescontos(int clienteTabela) {
+  double calcularTotalDescontosValor(int clienteTabela) {
     double totalDescontos = 0.0;
     _itens.forEach((produto, quantidade) {
-      double preco = clienteTabela == 1 ? produto.vlrtab1 : produto.vlrtab2;
-      double desconto = _descontos[produto] ?? 0.0;
-      double valorDesconto = preco * (desconto / 100) * quantidade;
-      totalDescontos += valorDesconto;
+      double preco = produto.getPrecoParaTabela(clienteTabela);
+      double descontoPercentual = _descontos[produto] ?? 0.0;
+      double valorDescontoLinha = preco * (descontoPercentual / 100) * quantidade;
+      totalDescontos += valorDescontoLinha;
     });
     return totalDescontos;
   }
 
-  // Valor total do carrinho considerando descontos
   double calcularValorTotal(int clienteTabela) {
-    double subtotal = calcularSubtotal(clienteTabela);
-    double totalDescontos = calcularTotalDescontos(clienteTabela);
-    return subtotal - totalDescontos;
+    return calcularSubtotal(clienteTabela) - calcularTotalDescontosValor(clienteTabela);
   }
 
-  // Adicionar item ao carrinho com desconto opcional
-  void adicionarItem(Produto produto, int quantidade, [double desconto = 0.0]) {
-    if (_itens.containsKey(produto)) {
-      // Se o produto já existe, somar à quantidade existente
-      _itens[produto] = (_itens[produto] ?? 0) + quantidade;
-    } else {
-      // Caso contrário, adicionar novo item
-      _itens[produto] = quantidade;
-    }
+  void adicionarItem(ProdutoModel produto, int quantidade, [double descontoPercentual = 0.0]) {
+    if (produto.codprd == null) return; // Não adicionar produtos sem ID
 
-    // Armazenar o desconto para este produto
-    if (desconto > 0) {
-      // Verificar se perdscmxm impõe limite de desconto
-      if (produto.perdscmxm > 0) {
-        // Se perdscmxm > 0, limitar o desconto a esse valor
-        _descontos[produto] =
-            desconto > produto.perdscmxm ? produto.perdscmxm : desconto;
+    int quantidadeAtual = _itens[produto] ?? 0;
+    int novaQuantidade = quantidadeAtual + quantidade;
+
+    if (novaQuantidade <= 0) {
+      removerItem(produto); // Chama notifyListeners internamente
+      return;
+    }
+    
+    _itens[produto] = novaQuantidade;
+
+    if (descontoPercentual >= 0) { // Permite aplicar 0 para remover desconto existente
+      if (produto.perdscmxm > 0 && descontoPercentual > produto.perdscmxm) {
+        _descontos[produto] = produto.perdscmxm;
       } else {
-        // Se perdscmxm = 0, permitir qualquer valor de desconto
-        _descontos[produto] = desconto;
+        _descontos[produto] = descontoPercentual;
+      }
+      if (descontoPercentual == 0) { // Se o desconto for explicitamente 0, remove do mapa
+          _descontos.remove(produto);
       }
     }
-
-    // Notificar os listeners sobre a mudança
     notifyListeners();
   }
 
-  // Remover item do carrinho
-  void removerItem(Produto produto) {
+  void removerItem(ProdutoModel produto) {
+    if (produto.codprd == null) return;
     _itens.remove(produto);
     _descontos.remove(produto);
     notifyListeners();
   }
 
-  // Atualizar quantidade de um item
-  void atualizarQuantidade(Produto produto, int quantidade) {
-    if (quantidade <= 0) {
+  void atualizarQuantidade(ProdutoModel produto, int novaQuantidade) {
+    if (produto.codprd == null) return;
+    if (novaQuantidade <= 0) {
       removerItem(produto);
     } else {
-      _itens[produto] = quantidade;
+      _itens[produto] = novaQuantidade;
+      if (!_itens.containsKey(produto)) { // Se foi removido por quantidade 0 e depois re-adicionado por outro fluxo
+        _descontos.remove(produto);
+      }
       notifyListeners();
     }
   }
 
-  // Atualizar desconto de um item
-  void atualizarDesconto(Produto produto, double desconto) {
-    if (!_itens.containsKey(produto)) {
-      return; // Não podemos aplicar desconto a um produto que não está no carrinho
+  void atualizarDesconto(ProdutoModel produto, double novoDescontoPercentual) {
+    if (produto.codprd == null || !_itens.containsKey(produto)) {
+      return;
     }
 
-    if (desconto <= 0) {
-      _descontos.remove(produto); // Remover desconto se for zero ou negativo
+    if (novoDescontoPercentual <= 0) {
+      _descontos.remove(produto);
     } else {
-      // Verificar se perdscmxm impõe limite de desconto
-      if (produto.perdscmxm > 0) {
-        // Se perdscmxm > 0, limitar o desconto a esse valor
-        _descontos[produto] =
-            desconto > produto.perdscmxm ? produto.perdscmxm : desconto;
+      if (produto.perdscmxm > 0 && novoDescontoPercentual > produto.perdscmxm) {
+        _descontos[produto] = produto.perdscmxm;
       } else {
-        // Se perdscmxm = 0, permitir qualquer valor de desconto
-        _descontos[produto] = desconto;
+        _descontos[produto] = novoDescontoPercentual;
       }
     }
-
     notifyListeners();
   }
 
-  // Obter o preço unitário de um produto (considerando a tabela e o desconto)
-  double precoUnitario(Produto produto, int clienteTabela) {
-    double precoBase = clienteTabela == 1 ? produto.vlrtab1 : produto.vlrtab2;
+  double precoUnitarioComDesconto(ProdutoModel produto, int clienteTabela) {
+    if (produto.codprd == null) return 0.0;
+    double precoBase = produto.getPrecoParaTabela(clienteTabela);
     double percentualDesconto = _descontos[produto] ?? 0.0;
-    return precoBase * (1 - percentualDesconto / 100);
+    return precoBase * (1 - (percentualDesconto / 100));
   }
 
-  // Limpar carrinho
+  // Retorna o VALOR do desconto para uma UNIDADE do produto
+  double getValorDescontoUnidade(ProdutoModel produto, int clienteTabela) {
+    if (produto.codprd == null || !_itens.containsKey(produto)) return 0.0;
+    double precoBase = produto.getPrecoParaTabela(clienteTabela);
+    double descontoPercentual = _descontos[produto] ?? 0.0;
+    return precoBase * (descontoPercentual / 100);
+  }
+
   void limpar() {
     _itens.clear();
     _descontos.clear();
     notifyListeners();
+  }
+
+  void substituir(Carrinho outroCarrinho) {
+  _itens.clear();
+  _descontos.clear();
+  
+  for (var entry in outroCarrinho.itens.entries) {
+    _itens[entry.key] = entry.value;
+  }
+  
+  for (var entry in outroCarrinho.descontos.entries) {
+    _descontos[entry.key] = entry.value;
+  }
+  
+  notifyListeners(); // Se Carrinho estender ChangeNotifier
   }
 }

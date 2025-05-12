@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
 import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
-import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
+import 'package:flutter_docig_venda/services/carrinhoService.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/screens/carrinhoScreen.dart';
+import 'package:logger/logger.dart';
 
 class AdicionarProdutoScreen extends StatefulWidget {
   final Cliente? cliente;
 
-  const AdicionarProdutoScreen({Key? key, this.cliente}) : super(key: key);
+  const AdicionarProdutoScreen({super.key, this.cliente});
 
   @override
   State<AdicionarProdutoScreen> createState() => _AdicionarProdutoScreenState();
@@ -37,15 +38,14 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   final FocusNode _descontoFocusNode = FocusNode();
 
   // Estado
-  Produto? _produtoSelecionado;
-  final Carrinho _carrinho = Carrinho();
-  Map<Produto, double> _descontos = {};
+  ProdutoModel? _produtoSelecionado;
   bool _isLoading = false;
   String? _errorMessage;
 
-  // DAOs
+  // DAOs e Services
   final ProdutoDao _produtoDao = ProdutoDao();
-  final CarrinhoDao _carrinhoDao = CarrinhoDao();
+  final CarrinhoService _carrinhoService = CarrinhoService();
+  final Logger _logger = Logger();
 
   @override
   void initState() {
@@ -54,7 +54,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   void _inicializar() {
-    _quantidadeController.text = '0';
+    _quantidadeController.text = '1'; // Começar com 1 é mais prático
     _descontoController.text = '0';
     _verificarCarrinhoExistente();
   }
@@ -74,18 +74,30 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
 
   Future<void> _verificarCarrinhoExistente() async {
     if (widget.cliente == null) return;
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
 
-    try {
-      final itensCarrinho =
-          await _carrinhoDao.getItensCliente(widget.cliente!.codcli);
-      if (itensCarrinho.isEmpty || !mounted) return;
-
-      final deveRecuperar = await _mostrarDialogCarrinhoPendente();
-      if (deveRecuperar == true) {
-        await _recuperarItensCarrinho(itensCarrinho);
+    // Só verificar se o carrinho atual estiver vazio
+    if (carrinhoProvider.isEmpty) {
+      setState(() => _isLoading = true);
+      
+      try {
+        // Verificar se o cliente tem itens pendentes no carrinho
+        // Usando clienteTemCarrinhoPendente em vez de verificarSeClienteTemCarrinhoPendente
+        final resultado = await _carrinhoService.clienteTemCarrinhoPendente(widget.cliente!);
+        
+        if (mounted && resultado.isSuccess && resultado.data == true) {
+          final deveRecuperar = await _mostrarDialogCarrinhoPendente();
+          if (mounted && deveRecuperar == true) {
+            await _recuperarItensCarrinho();
+          }
+        }
+      } catch (e) {
+        _logErro('Erro ao verificar carrinho existente', e);
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
-    } catch (e) {
-      _logErro('Erro ao verificar carrinho existente', e);
     }
   }
 
@@ -123,26 +135,52 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
     );
   }
 
-  Future<void> _recuperarItensCarrinho(List<CarrinhoItem> itensCarrinho) async {
-    _carrinho.itens.clear();
-    _descontos.clear();
-
-    for (var item in itensCarrinho) {
-      final produto = await _produtoDao.getProdutoByCodigo(item.codprd);
-      if (produto != null) {
-        _carrinho.itens[produto] = item.quantidade;
-        if (item.desconto > 0) {
-          _descontos[produto] = item.desconto * 100;
+  Future<void> _recuperarItensCarrinho() async {
+    if (widget.cliente == null || !mounted) return;
+    
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    
+    setState(() => _isLoading = true);
+    
+    try {
+      final resultado = await _carrinhoService.recuperarCarrinho(widget.cliente!);
+      
+      if (mounted) {
+        if (resultado.isSuccess) {
+          // Limpar o carrinho atual no provider
+          carrinhoProvider.limpar();
+          
+          // Recuperar itens e descontos
+          _logger.i('Itens recuperados: ${resultado.data?.itens.length ?? 0}');
+          
+          // Notificações serão enviadas automaticamente pelo Provider
+          // após todas as adições estarem concluídas
+          setState(() {}); // Atualizar UI após recuperação
+          
+          _mostrarMensagem(
+            "Carrinho recuperado com sucesso",
+            cor: kSuccessColor,
+          );
+        } else {
+          _logErro('Falha ao recuperar carrinho', resultado.errorMessage);
+          _mostrarMensagem(
+            "Erro ao recuperar carrinho: ${resultado.errorMessage}",
+            cor: kErrorColor,
+          );
         }
       }
-    }
-
-    if (mounted) {
-      setState(() {});
-      _mostrarMensagem(
-        "Carrinho recuperado com sucesso (${itensCarrinho.length} itens)",
-        cor: kSuccessColor,
-      );
+    } catch (e) {
+      _logErro('Erro ao recuperar itens do carrinho', e);
+      if (mounted) {
+        _mostrarMensagem(
+          "Erro ao recuperar carrinho: $e",
+          cor: kErrorColor,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -168,22 +206,26 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
     try {
       final produto = await _produtoDao.getProdutoByCodigo(codigo);
 
-      setState(() {
-        _isLoading = false;
-        _produtoSelecionado = produto;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _produtoSelecionado = produto;
+        });
 
-      if (produto == null) {
-        _mostrarMensagem('Produto não encontrado', cor: kErrorColor);
-      } else {
-        _quantidadeFocusNode.requestFocus();
+        if (produto == null) {
+          _mostrarMensagem('Produto não encontrado', cor: kErrorColor);
+        } else {
+          _quantidadeFocusNode.requestFocus();
+        }
       }
     } catch (e) {
       _logErro('Erro ao buscar produto', e);
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Erro ao buscar produto: ${e.toString()}';
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Erro ao buscar produto: ${e.toString()}';
+        });
+      }
     }
   }
 
@@ -216,45 +258,44 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
     }
 
     try {
-      // Atualizar carrinho em memória
-      _carrinho.itens[_produtoSelecionado!] = quantidade;
-      if (desconto > 0) {
-        _descontos[_produtoSelecionado!] = desconto;
-      }
-
-      // Salvar no banco de dados
-      final carrinhoItem = CarrinhoItem(
-        codprd: _produtoSelecionado!.codprd,
-        codcli: widget.cliente!.codcli,
-        quantidade: quantidade,
-        desconto: desconto / 100,
-        finalizado: 0,
-        dataCriacao: DateTime.now(),
-      );
-
-      await _carrinhoDao.salvarItem(carrinhoItem);
-
-      // Limpar campos e mostrar confirmação
+      // Obter o carrinho via Provider
+      final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+      
+      // Adicionar ao carrinho em memória (via Provider)
+      carrinhoProvider.adicionarItem(_produtoSelecionado!, quantidade, desconto);
+      
+      // Feedback imediato e preparar para próximo produto
       setState(() {
         _produtoSelecionado = null;
         _codigoProdutoController.clear();
-        _quantidadeController.text = '0';
+        _quantidadeController.text = '1';
         _descontoController.text = '0';
       });
-
+      
       _codigoFocusNode.requestFocus();
       _mostrarMensagem('Produto adicionado ao carrinho', cor: kSuccessColor);
+      
+      // Persistir alterações no banco de dados
+      _carrinhoService.salvarAlteracoesCarrinho(carrinhoProvider, widget.cliente!)
+        .then((resultado) {
+          if (!resultado.isSuccess && mounted) {
+            _logErro('Falha ao salvar alterações no carrinho', resultado.errorMessage);
+            _mostrarMensagem('Erro ao salvar carrinho: ${resultado.errorMessage}',
+                cor: kErrorColor);
+          }
+        });
     } catch (e) {
-      _logErro('Erro ao salvar produto no carrinho', e);
+      _logErro('Erro ao adicionar produto ao carrinho', e);
       _mostrarMensagem('Erro ao adicionar produto: ${e.toString()}',
           cor: kErrorColor);
     }
   }
 
   void _navegarParaCarrinho() {
-    final totalItens = _carrinho.quantidadeTotal;
-
-    if (totalItens == 0) {
+    // Verificar estado do carrinho via Provider
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    
+    if (carrinhoProvider.isEmpty) {
       _mostrarMensagem('O carrinho está vazio', cor: kTextSecondaryColor);
       return;
     }
@@ -274,8 +315,9 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
       ),
     ).then((_) {
       if (mounted) {
-        setState(() {});
-        _verificarCarrinhoExistente();
+        setState(() {
+          // Atualizar UI após retornar do carrinho se necessário
+        });
       }
     });
   }
@@ -297,11 +339,11 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   void _logErro(String mensagem, dynamic erro) {
-    debugPrint('❌ $mensagem: $erro');
+    _logger.e('$mensagem: $erro');
   }
 
   // Função para obter o valor do produto de acordo com a tabela de preço do cliente
-  double _getValorProdutoTabela(Produto produto) {
+  double _getValorProdutoTabela(ProdutoModel produto) {
     if (widget.cliente == null) {
       return produto.vlrbasvda; // Valor padrão se não houver cliente
     }
@@ -309,9 +351,9 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
     // Verificar qual tabela de preço usar com base no codtab do cliente
     switch (widget.cliente!.codtab) {
       case 1:
-        return produto.vlrtab1 ?? produto.vlrbasvda;
+        return produto.vlrtab1 != null ? produto.vlrtab1! : produto.vlrbasvda;
       case 2:
-        return produto.vlrtab2 ?? produto.vlrbasvda;
+        return produto.vlrtab2 != null ? produto.vlrtab2! : produto.vlrbasvda;
       default:
         return produto.vlrbasvda; // Valor padrão para outras tabelas
     }
@@ -396,41 +438,47 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   Widget _construirBarraInfo() {
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 0,
-      color: kSurfaceColor,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            const Icon(Icons.shopping_cart_outlined,
-                size: 16, color: kTextSecondaryColor),
-            const SizedBox(width: 8),
-            Text(
-              "Itens no carrinho: ${_carrinho.quantidadeTotal}",
-              style: const TextStyle(
-                fontSize: 14,
-                color: kTextSecondaryColor,
-              ),
-            ),
-            if (widget.cliente != null) ...[
-              const SizedBox(width: 16),
-              const Icon(Icons.list_alt_outlined,
-                  size: 16, color: kTextSecondaryColor),
-              const SizedBox(width: 8),
-              Text(
-                "Tabela: ${widget.cliente!.codtab}",
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: kTextSecondaryColor,
+    // Usando Selector para apenas reconstruir quando a quantidade mudar
+    return Selector<Carrinho, int>(
+      selector: (_, carrinho) => carrinho.quantidadeTotal,
+      builder: (context, quantidadeTotal, _) {
+        return Card(
+          margin: EdgeInsets.zero,
+          elevation: 0,
+          color: kSurfaceColor,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                const Icon(Icons.shopping_cart_outlined,
+                    size: 16, color: kTextSecondaryColor),
+                const SizedBox(width: 8),
+                Text(
+                  "Itens no carrinho: $quantidadeTotal",
+                  style: const TextStyle(
+                    fontSize: 14,
+                    color: kTextSecondaryColor,
+                  ),
                 ),
-              ),
-            ],
-          ],
-        ),
-      ),
+                if (widget.cliente != null) ...[
+                  const SizedBox(width: 16),
+                  const Icon(Icons.list_alt_outlined,
+                      size: 16, color: kTextSecondaryColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    "Tabela: ${widget.cliente!.codtab}",
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: kTextSecondaryColor,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -556,7 +604,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
                   ),
                   child: Text(
                     estoqueDisponivel
-                        ? "Em estoque: ${produto.qtdetq}" // qtdetq em vez de qtdest
+                        ? "Em estoque: ${produto.qtdetq}" 
                         : "Sem estoque",
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
@@ -709,33 +757,37 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   Widget _construirBotaoCarrinho() {
-    final totalItens = _carrinho.quantidadeTotal;
-
-    return FloatingActionButton.extended(
-      onPressed: _navegarParaCarrinho,
-      backgroundColor: kPrimaryColor,
-      elevation: 2,
-      icon: Badge(
-        isLabelVisible: totalItens > 0,
-        label: Text(
-          '$totalItens',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
+    // Usando Selector para reconstruir apenas quando a quantidade mudar
+    return Selector<Carrinho, int>(
+      selector: (_, carrinho) => carrinho.quantidadeTotal,
+      builder: (context, totalItens, _) {
+        return FloatingActionButton.extended(
+          onPressed: _navegarParaCarrinho,
+          backgroundColor: kPrimaryColor,
+          elevation: 2,
+          icon: Badge(
+            isLabelVisible: totalItens > 0,
+            label: Text(
+              '$totalItens',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            child: const Icon(Icons.shopping_cart_outlined,
+                color: Colors.white, size: 20),
           ),
-        ),
-        child: const Icon(Icons.shopping_cart_outlined,
-            color: Colors.white, size: 20),
-      ),
-      label: const Text(
-        "Carrinho",
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
-          fontSize: 14,
-        ),
-      ),
+          label: const Text(
+            "Carrinho",
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w500,
+              fontSize: 14,
+            ),
+          ),
+        );
+      },
     );
   }
 }

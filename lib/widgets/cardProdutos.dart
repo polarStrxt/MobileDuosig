@@ -1,23 +1,28 @@
+// lib/widgets/card_produtos.dart (Nome de arquivo sugerido)
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart'; // Necessário para Provider.of
 import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart';
+import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Seu ChangeNotifier
+
+// Constantes de cor, se usadas apenas aqui, podem ficar aqui.
+// Se usadas globalmente, defina em um arquivo de tema ou constantes.
+const Color kCardPrimaryColor = Color(0xFF5D5CDE);
+const Color kCardSuccessColor = Color(0xFF43A047);
 
 class ProdutoDetalhe extends StatelessWidget {
-  final Produto produto;
-  final Carrinho carrinho;
-  final void Function(int quantidade, double desconto) onAddToCart;
+  final ProdutoModel produto;
+  // Callback para notificar a tela pai sobre a intenção de adicionar ao carrinho
+  final void Function(int quantidade, double descontoPercentual) onAddToCart;
   final int clienteTabela;
 
   const ProdutoDetalhe({
-    Key? key,
+    super.key, // Usando super.key
     required this.produto,
-    required this.carrinho,
-    required this.onAddToCart,
+    required this.onAddToCart, // Este callback é crucial
     this.clienteTabela = 1,
-  }) : super(key: key);
-
-  // CÁLCULOS E FORMATAÇÃO
+  });
+  // O parâmetro 'Carrinho carrinho' foi REMOVIDO daqui
 
   double get precoAtual =>
       clienteTabela == 1 ? produto.vlrtab1 : produto.vlrtab2;
@@ -25,40 +30,31 @@ class ProdutoDetalhe extends StatelessWidget {
   String formatarPreco(double preco) =>
       'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}';
 
-  bool get isProdutoNoCarrinho => carrinho.itens.containsKey(produto);
-
-  int get quantidadeNoCarrinho => carrinho.itens[produto] ?? 0;
-
-  void _adicionarAoCarrinho(BuildContext context) {
-    carrinho.adicionarItem(produto, 1, 0);
-    onAddToCart(1, 0);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${produto.dcrprd} adicionado ao carrinho'),
-        duration: Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.green[700],
-      ),
-    );
-  }
-
   void _mostrarDetalhesProduto(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => ProdutoDetalheModal(
-        produto: produto,
-        carrinho: carrinho,
-        onAddToCart: onAddToCart,
-        clienteTabela: clienteTabela,
-      ),
+      builder: (modalContext) {
+        // O Modal não precisa mais do 'carrinho' passado diretamente.
+        // Ele usará o mesmo onAddToCart ou Provider.of<Carrinho>(modalContext) internamente se precisar LER algo.
+        return ProdutoDetalheModal(
+          produto: produto,
+          onAddToCart: onAddToCart, // Passa o mesmo callback
+          clienteTabela: clienteTabela,
+        );
+      },
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    // Para ler o estado atual do carrinho (ex: para o texto do botão)
+    // Usamos Provider.of<Carrinho>(context) que OUVE as mudanças.
+    final carrinhoProvider = Provider.of<Carrinho>(context);
+    final bool isProdutoNoCarrinho = carrinhoProvider.itens.containsKey(produto);
+    final int quantidadeNoCarrinho = carrinhoProvider.itens[produto] ?? 0;
+
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(
@@ -71,98 +67,92 @@ class ProdutoDetalhe extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Imagem ou ícone
             Expanded(
               flex: 2,
               child: Container(
                 color: Colors.grey[100],
                 width: double.infinity,
                 child: Icon(
-                  Icons.inventory_2,
-                  color: Color(0xFF5D5CDE),
-                  size: 24,
+                  Icons.inventory_2_outlined, // Ícone genérico
+                  color: kCardPrimaryColor.withOpacity(0.7),
+                  size: 40, // Aumentado para melhor visualização
                 ),
               ),
             ),
-            // Informações do produto
             Expanded(
               flex: 3,
               child: Padding(
-                padding: EdgeInsets.all(8),
+                padding: const EdgeInsets.all(8),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween, // Para espaçar o conteúdo
                   children: [
-                    // Código
-                    Text(
-                      'Cód: ${produto.codprd}',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                    SizedBox(height: 4),
-
-                    // Nome do produto
-                    Expanded(
-                      child: Text(
-                        produto.dcrprd,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 12,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Cód: ${produto.codprd ?? "N/A"}', // Acesso seguro
+                          style: TextStyle(fontSize: 10, color: Colors.grey[600]),
                         ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-
-                    // Marca
-                    Text(
-                      produto.nommrc,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Colors.grey[600],
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-
-                    // Preço
-                    SizedBox(height: 4),
-                    Text(
-                      formatarPreco(precoAtual),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF5D5CDE),
-                      ),
-                    ),
-
-                    // Botão de adicionar
-                    SizedBox(height: 6),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 24,
-                      child: TextButton(
-                        onPressed: () => _adicionarAoCarrinho(context),
-                        style: TextButton.styleFrom(
-                          backgroundColor: isProdutoNoCarrinho
-                              ? Colors.green[700]
-                              : Color(0xFF5D5CDE),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                          padding: EdgeInsets.zero,
+                        const SizedBox(height: 4),
+                        Text(
+                          produto.dcrprd,
+                          style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
+                          maxLines: 2, // Ajustado para 2 linhas
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        child: Text(
-                          isProdutoNoCarrinho
-                              ? '${quantidadeNoCarrinho}x no carrinho'
-                              : 'Adicionar',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w500,
+                        Text(
+                          produto.nommrc,
+                          style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          formatarPreco(precoAtual),
+                          style: const TextStyle(
+                            fontSize: 13, // Aumentado
+                            fontWeight: FontWeight.bold, // Negrito
+                            color: kCardPrimaryColor,
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 28, // Altura ajustada
+                          child: TextButton.icon(
+                            icon: Icon(
+                              isProdutoNoCarrinho ? Icons.check_circle : Icons.add_shopping_cart,
+                              size: 14, // Tamanho do ícone
+                            ),
+                            label: Text(
+                              isProdutoNoCarrinho
+                                  ? '$quantidadeNoCarrinho NO CARRINHO'
+                                  : 'ADICIONAR',
+                              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold), // Fonte menor
+                            ),
+                            onPressed: () {
+                              // Adiciona 1 unidade com 0% de desconto por padrão
+                              // A tela pai (ProdutoScreen) que implementa onAddToCart
+                              // usará o Provider e o CarrinhoService.
+                              onAddToCart(1, 0.0);
+                            },
+                            style: TextButton.styleFrom(
+                              backgroundColor: isProdutoNoCarrinho
+                                  ? kCardSuccessColor 
+                                  : kCardPrimaryColor,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(4), // Borda mais suave
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 8), // Padding ajustado
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -175,52 +165,107 @@ class ProdutoDetalhe extends StatelessWidget {
   }
 }
 
+// --- MODAL DE DETALHES E ADIÇÃO ---
 class ProdutoDetalheModal extends StatefulWidget {
-  final Produto produto;
-  final Carrinho carrinho;
-  final void Function(int quantidade, double desconto) onAddToCart;
+  final ProdutoModel produto;
+  // Callback para notificar a tela pai (ProdutoScreen)
+  final void Function(int quantidade, double descontoPercentual) onAddToCart;
   final int clienteTabela;
 
   const ProdutoDetalheModal({
-    Key? key,
+    super.key,
     required this.produto,
-    required this.carrinho,
-    required this.onAddToCart,
+    required this.onAddToCart, // Recebe o callback
     required this.clienteTabela,
-  }) : super(key: key);
+  });
+  // O parâmetro 'Carrinho carrinho' foi REMOVIDO daqui
 
   @override
-  _ProdutoDetalheModalState createState() => _ProdutoDetalheModalState();
+  State<ProdutoDetalheModal> createState() => _ProdutoDetalheModalState();
 }
 
 class _ProdutoDetalheModalState extends State<ProdutoDetalheModal> {
-  // Controllers
-  final TextEditingController _quantidadeController =
-      TextEditingController(text: "1");
-  final TextEditingController _descontoController =
-      TextEditingController(text: "0");
+  final TextEditingController _quantidadeController = TextEditingController(text: "1");
+  final TextEditingController _descontoController = TextEditingController(text: "0");
   final FocusNode _quantidadeFocus = FocusNode();
   final FocusNode _descontoFocus = FocusNode();
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _scrollController = ScrollController(); // Para rolar quando o teclado aparecer
 
-  // Estado
   int quantidade = 1;
-  double desconto = 0.0;
-  final Color primaryColor = Color(0xFF5D5CDE);
+  double descontoPercentual = 0.0; // Desconto é percentual
 
   @override
   void initState() {
     super.initState();
-    _quantidadeController.addListener(_atualizarQuantidade);
-    _descontoController.addListener(_atualizarDesconto);
+    // Lê o estado atual do carrinho para pré-popular os campos se o produto já estiver lá
+    // É importante fazer isso no initState OU didChangeDependencies se usar context
+    // Aqui, vamos assumir que se o modal é aberto, é para uma nova adição ou ajuste.
+    // Para pré-popular, precisaríamos do Provider aqui:
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    //   if (carrinhoProvider.itens.containsKey(widget.produto)) {
+    //     _quantidadeController.text = carrinhoProvider.itens[widget.produto].toString();
+    //     _descontoController.text = (carrinhoProvider.descontos[widget.produto] ?? 0.0).toStringAsFixed(0);
+    //     setState(() {
+    //       quantidade = carrinhoProvider.itens[widget.produto]!;
+    //       descontoPercentual = carrinhoProvider.descontos[widget.produto] ?? 0.0;
+    //     });
+    //   }
+    // });
+
+    _quantidadeController.addListener(_onQuantidadeChange);
+    _descontoController.addListener(_onDescontoChange);
     _quantidadeFocus.addListener(_handleFocusChange);
     _descontoFocus.addListener(_handleFocusChange);
   }
 
+  void _onQuantidadeChange() {
+    final valor = int.tryParse(_quantidadeController.text);
+    if (valor != null && valor > 0) {
+      if (quantidade != valor) setState(() => quantidade = valor);
+    } else if (_quantidadeController.text.isEmpty) {
+        if (quantidade != 0) setState(() => quantidade = 0); // Permite apagar para digitar
+    }
+  }
+
+  void _onDescontoChange() {
+    final valor = double.tryParse(_descontoController.text);
+    if (valor != null && valor >= 0) {
+      double descontoFinal = valor;
+      if (widget.produto.perdscmxm > 0 && valor > widget.produto.perdscmxm) {
+        descontoFinal = widget.produto.perdscmxm;
+        // Atualiza o controller se o valor foi limitado
+        if (_descontoController.text != descontoFinal.toStringAsFixed(0)) { // Evita loop
+            WidgetsBinding.instance.addPostFrameCallback((_){ // Adia a atualização do controller
+                _descontoController.text = descontoFinal.toStringAsFixed(0);
+                _descontoController.selection = TextSelection.fromPosition(TextPosition(offset: _descontoController.text.length));
+            });
+        }
+      }
+      if (descontoPercentual != descontoFinal) setState(() => descontoPercentual = descontoFinal);
+    } else if (_descontoController.text.isEmpty) {
+        if (descontoPercentual != 0) setState(() => descontoPercentual = 0);
+    }
+  }
+
+  void _handleFocusChange() {
+    if (_quantidadeFocus.hasFocus || _descontoFocus.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 300), () { // Leve atraso
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
-    _quantidadeController.removeListener(_atualizarQuantidade);
-    _descontoController.removeListener(_atualizarDesconto);
+    _quantidadeController.removeListener(_onQuantidadeChange);
+    _descontoController.removeListener(_onDescontoChange);
     _quantidadeFocus.removeListener(_handleFocusChange);
     _descontoFocus.removeListener(_handleFocusChange);
     _quantidadeController.dispose();
@@ -231,462 +276,174 @@ class _ProdutoDetalheModalState extends State<ProdutoDetalheModal> {
     super.dispose();
   }
 
-  // CÁLCULOS E FORMATAÇÃO
-
-  void _atualizarQuantidade() {
-    final valor = int.tryParse(_quantidadeController.text);
-    if (valor != null && valor > 0) {
-      setState(() {
-        quantidade = valor;
-      });
-    }
-  }
-
-  void _atualizarDesconto() {
-    final valor = double.tryParse(_descontoController.text);
-    if (valor != null && valor >= 0) {
-      if (temLimiteDesconto) {
-        final descontoFinal = valor > descontoMaximo ? descontoMaximo : valor;
-        setState(() {
-          desconto = descontoFinal;
-          if (descontoFinal != valor) {
-            _descontoController.text = descontoFinal.toString();
-          }
-        });
-      } else {
-        setState(() {
-          desconto = valor;
-        });
-      }
-    }
-  }
-
-  void _handleFocusChange() {
-    if (_quantidadeFocus.hasFocus || _descontoFocus.hasFocus) {
-      Future.delayed(Duration(milliseconds: 300), () {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
-  bool get temLimiteDesconto => widget.produto.perdscmxm > 0;
-  double get descontoMaximo => widget.produto.perdscmxm;
-  double get precoAtual => widget.clienteTabela == 1
+  double get precoBase => widget.clienteTabela == 1
       ? widget.produto.vlrtab1
       : widget.produto.vlrtab2;
-  double get precoComDesconto => precoAtual * (1 - desconto / 100);
+  double get precoFinalUnitario => precoBase * (1 - (descontoPercentual / 100));
+  double get subtotalItem => precoFinalUnitario * quantidade;
 
   String formatarPreco(double preco) {
     return 'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}';
   }
 
-  // AÇÕES
+  void _confirmarAdicao() {
+    final qtdFinal = int.tryParse(_quantidadeController.text) ?? 0;
+    final descFinal = double.tryParse(_descontoController.text) ?? 0.0;
 
-  void _adicionarAoCarrinho() {
-    // Fechar teclado
-    FocusScope.of(context).unfocus();
-
-    // Adicionar ao carrinho
-    widget.carrinho.adicionarItem(widget.produto, quantidade, desconto);
-    widget.onAddToCart(quantidade, desconto);
-    Navigator.pop(context);
-
-    // Feedback
-    String mensagem =
-        '${quantidade}x ${widget.produto.dcrprd} adicionado ao carrinho';
-    if (desconto > 0) {
-      mensagem += ' com ${desconto.toStringAsFixed(1)}% de desconto';
+    if (qtdFinal <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Quantidade deve ser maior que zero.'), backgroundColor: Colors.red),
+      );
+      return;
     }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(mensagem),
-        backgroundColor: Colors.green[700],
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    // A lógica de validação de desconto máximo já está em _onDescontoChange
+    
+    FocusScope.of(context).unfocus(); // Fecha teclado
+    widget.onAddToCart(qtdFinal, descFinal); // Chama o callback para a tela pai
+    Navigator.pop(context); // Fecha o modal
   }
-
-  // WIDGETS
 
   @override
   Widget build(BuildContext context) {
     final double keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.85,
-      margin: EdgeInsets.only(bottom: keyboardHeight),
-      decoration: BoxDecoration(
+      // Ajusta altura para não ficar muito grande em telas maiores e permitir scroll
+      height: MediaQuery.of(context).size.height * 0.7 + keyboardHeight, 
+      margin: EdgeInsets.only(bottom: keyboardHeight > 0 ? 0 : MediaQuery.of(context).padding.bottom), // Evita que o teclado sobreponha
+      decoration: const BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)), // Raio maior
       ),
       child: Column(
         children: [
-          _buildAppBar(),
-          Expanded(child: _buildContent()),
-          _buildBottomBar(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAppBar() {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: primaryColor,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      child: Row(
-        children: [
+          // AppBar do Modal
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: kCardPrimaryColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Adicionar ao Carrinho', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w500, fontSize: 16)),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 22),
+                  onPressed: () => Navigator.pop(context),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          // Conteúdo Rolável
           Expanded(
-            child: Text(
-              'Detalhes do Produto',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w500,
-                fontSize: 16,
-              ),
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.close, color: Colors.white, size: 20),
-            onPressed: () {
-              FocusScope.of(context).unfocus();
-              Navigator.pop(context);
-            },
-            padding: EdgeInsets.zero,
-            constraints: BoxConstraints(),
-          ),
-        ],
-      ),
-    );
-  }
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Detalhes do Produto
+                  Text(widget.produto.dcrprd, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text("Cód: ${widget.produto.codprd ?? "N/A"}  •  Marca: ${widget.produto.nommrc}", style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+                  const SizedBox(height: 8),
+                  Text("Preço Tabela ${widget.clienteTabela}: ${formatarPreco(precoBase)}", style: TextStyle(fontSize: 14, color: Colors.grey[800])),
+                  if (descontoPercentual > 0)
+                    Text("Preço com ${descontoPercentual.toStringAsFixed(1)}% Desc.: ${formatarPreco(precoFinalUnitario)}", style: TextStyle(fontSize: 14, color: kCardSuccessColor, fontWeight: FontWeight.w500)),
+                  
+                  const Divider(height: 32),
 
-  Widget _buildContent() {
-    return ListView(
-      controller: _scrollController,
-      padding: EdgeInsets.all(16),
-      children: [
-        // Cabeçalho
-        _buildCodigoProduto(),
-        SizedBox(height: 12),
-        _buildInfoProduto(),
-        SizedBox(height: 16),
-
-        // Preços
-        _buildSecaoPrecos(),
-        SizedBox(height: 16),
-        Divider(height: 1),
-        SizedBox(height: 16),
-
-        // Características do produto
-        _buildCaracteristicas(),
-        SizedBox(height: 16),
-        Divider(height: 1),
-        SizedBox(height: 16),
-
-        // Campos de entrada
-        _buildCamposEntrada(),
-        SizedBox(height: 80), // Espaço extra para scroll
-      ],
-    );
-  }
-
-  Widget _buildCodigoProduto() {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-            color: Colors.grey[300]!), // Usando Border.all em vez de BorderSide
-      ),
-      child: Text(
-        'Código: ${widget.produto.codprd}',
-        style: TextStyle(
-          fontSize: 12,
-          color: Colors.grey[800],
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInfoProduto() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          widget.produto.dcrprd,
-          style: TextStyle(
-            fontWeight: FontWeight.w500,
-            fontSize: 16,
-          ),
-        ),
-        SizedBox(height: 4),
-        Text(
-          "Marca: ${widget.produto.nommrc}",
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey[600],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSecaoPrecos() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Preço atual
-        Row(
-          children: [
-            Text(
-              'Preço na Tabela ${widget.clienteTabela}:',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey[700],
-              ),
-            ),
-            SizedBox(width: 8),
-            Text(
-              formatarPreco(precoAtual),
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: primaryColor,
-              ),
-            ),
-          ],
-        ),
-
-        // Preço com desconto (quando houver)
-        if (desconto > 0) ...[
-          SizedBox(height: 4),
-          Row(
-            children: [
-              Text(
-                'Preço com desconto:',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey[700],
-                ),
-              ),
-              SizedBox(width: 8),
-              Text(
-                formatarPreco(precoComDesconto),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.green[700],
-                ),
-              ),
-            ],
-          ),
-        ],
-
-        // Preço alternativo
-        SizedBox(height: 4),
-        Text(
-          'Preço na Tabela ${widget.clienteTabela == 1 ? "2" : "1"}: ${formatarPreco(widget.clienteTabela == 1 ? widget.produto.vlrtab2 : widget.produto.vlrtab1)}',
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[600],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCaracteristicas() {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        _buildInfoTag('Unidade', widget.produto.codundprd),
-        _buildInfoTag('Volume', '${widget.produto.vol}'),
-        if (widget.produto.qtdetq != null)
-          _buildInfoTag('Estoque', '${widget.produto.qtdetq}'),
-        _buildInfoTag('Qtd/Vol', '${widget.produto.qtdvol}'),
-        _buildInfoTag('Múlt. Venda', '${widget.produto.qtdmulvda}'),
-        _buildInfoTag(
-          'Desc. Máx',
-          temLimiteDesconto ? '${descontoMaximo}%' : 'Sem limite',
-          color: temLimiteDesconto ? Colors.orange[700] : Colors.green[700],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildInfoTag(String label, String value, {Color? color}) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: (color ?? primaryColor).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-            color: (color ?? primaryColor)
-                .withOpacity(0.3)), // Usando Border.all em vez de BorderSide
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(
-          fontSize: 11,
-          color: color ?? primaryColor,
-          fontWeight: FontWeight.w500,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCamposEntrada() {
-    return Column(
-      children: [
-        // Quantidade
-        Row(
-          children: [
-            Text(
-              'Quantidade:',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            Spacer(),
-            SizedBox(
-              width: 80,
-              child: TextField(
-                controller: _quantidadeController,
-                focusNode: _quantidadeFocus,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  // Quantidade
+                  Text("Quantidade:", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey[800])),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _quantidadeController,
+                    focusNode: _quantidadeFocus,
+                    keyboardType: TextInputType.number,
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                        isDense: true,
+                        hintText: "1",
+                    ),
+                    style: const TextStyle(fontSize: 16),
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    onSubmitted: (_) => FocusScope.of(context).requestFocus(_descontoFocus),
                   ),
-                  contentPadding:
-                      EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                  isDense: true,
-                ),
-                style: TextStyle(fontSize: 13),
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onEditingComplete: () =>
-                    FocusScope.of(context).requestFocus(_descontoFocus),
-              ),
-            ),
-          ],
-        ),
+                  const SizedBox(height: 16),
 
-        SizedBox(height: 12),
-
-        // Desconto
-        Row(
-          children: [
-            Text(
-              'Desconto (%):',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-            ),
-            Spacer(),
-            SizedBox(
-              width: 80,
-              child: TextField(
-                controller: _descontoController,
-                focusNode: _descontoFocus,
-                keyboardType: TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.center,
-                decoration: InputDecoration(
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
-                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  // Desconto
+                  Text("Desconto (%):", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.grey[800])),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _descontoController,
+                    focusNode: _descontoFocus,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.center,
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                      isDense: true,
+                      suffixText: "%",
+                      hintText: widget.produto.perdscmxm > 0 ? "Máx: ${widget.produto.perdscmxm.toStringAsFixed(0)}%" : "0",
+                      hintStyle: TextStyle(fontSize: 12, color: Colors.grey[500])
+                    ),
+                    style: const TextStyle(fontSize: 16),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}'))],
+                    onSubmitted: (_) => _confirmarAdicao(),
                   ),
-                  contentPadding:
-                      EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                  isDense: true,
-                  suffixText: '%',
-                  hintText: temLimiteDesconto
-                      ? 'Máx: ${descontoMaximo}%'
-                      : 'Sem limite',
-                  hintStyle: TextStyle(fontSize: 10),
-                ),
-                style: TextStyle(fontSize: 13),
-                inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
+                  const SizedBox(height: 24),
+
+                  // Resumo do Item
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Subtotal do Item:", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        Text(formatarPreco(subtotalItem), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: kCardPrimaryColor)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 100), // Espaço para scroll
                 ],
-                onEditingComplete: () => FocusScope.of(context).unfocus(),
               ),
             ),
-          ],
-        ),
-
-        SizedBox(height: 16),
-
-        // Total
-        Container(
-          padding: EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            border: Border.all(
-                color: Colors
-                    .grey[300]!), // Usando Border.all em vez de BorderSide
-            borderRadius: BorderRadius.circular(4),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Total:',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              ),
-              Text(
-                formatarPreco(precoComDesconto * quantidade),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: primaryColor,
+          // Barra Inferior com Botão
+          Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0,-2)),
+              ]
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.add_shopping_cart),
+                label: const Text("CONFIRMAR E ADICIONAR"),
+                onPressed: _confirmarAdicao,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kCardPrimaryColor,
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
               ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return Container(
-      padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border(
-            top: BorderSide(
-                color:
-                    Colors.grey[200]!)), // Usando Border com um lado específico
-      ),
-      child: SizedBox(
-        width: double.infinity,
-        height: 44,
-        child: ElevatedButton(
-          onPressed: _adicionarAoCarrinho,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primaryColor,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
             ),
           ),
-          child: Text(
-            'Adicionar ao Carrinho',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
+        ],
       ),
     );
   }

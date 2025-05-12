@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
 import 'package:flutter_docig_venda/widgets/gerarpdfsimples.dart';
-import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
-import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
+import 'package:flutter_docig_venda/widgets/carrinho.dart';
+import 'package:flutter_docig_venda/services/carrinhoService.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:logger/logger.dart';
 
 /// Modelo para condição de pagamento
 class CondicaoPagamento {
@@ -48,36 +49,22 @@ class CarrinhoScreen extends StatefulWidget {
 }
 
 class _CarrinhoScreenState extends State<CarrinhoScreen> {
-  // Mapa para gerenciar os itens com produtos como chaves
-  final Map<Produto, int> _produtosMap = {};
-
-  // Mapa local para gerenciar os descontos
-  final Map<Produto, double> _descontos = {};
-
-  // Lista de itens do carrinho
-  late List<CarrinhoItem> _itensCarrinho = [];
-
   // Lista de condições de pagamento
   late List<CondicaoPagamento> _condicoesPagamento = [];
 
-  // DAOs para acesso ao banco de dados
-  final CarrinhoDao _carrinhoDao = CarrinhoDao();
-  final ProdutoDao _produtoDao = ProdutoDao();
-
-  // Flag para indicar se o carrinho está vazio
-  bool get _isEmpty => _produtosMap.isEmpty;
+  // Service for cart operations
+  final CarrinhoService _carrinhoService = CarrinhoService();
+  final Logger _logger = Logger();
 
   // Estado de carregamento
-  bool _isLoading = true;
+  final bool _isLoading = false; // Made final since not changed after init
   String? _errorMessage;
   bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
-    _inicializarDados();
     _carregarCondicoesPagamento();
-
   }
 
   @override
@@ -194,199 +181,88 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       final List<dynamic> decodedData = jsonDecode(jsonData);
       _condicoesPagamento =
           decodedData.map((item) => CondicaoPagamento.fromJson(item)).toList();
-      debugPrint(
-          '📱 Carregadas ${_condicoesPagamento.length} condições de pagamento');
+      _logger.i('Carregadas ${_condicoesPagamento.length} condições de pagamento');
     } catch (e) {
-      debugPrint('❌ Erro ao carregar condições de pagamento: $e');
+      _logger.e('Erro ao carregar condições de pagamento: $e');
       // Criar lista vazia para evitar erros
       _condicoesPagamento = [];
     }
   }
 
-  // Método para carregar dados do banco e inicializar os mapas locais
-  Future<void> _inicializarDados() async {
-    if (_isDisposed) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      // Carregar itens do banco de dados
-      _itensCarrinho = await _carrinhoDao.getItensCliente(widget.codcli);
-      debugPrint('📱 Carregados ${_itensCarrinho.length} itens do carrinho');
-
-      // Converter lista de CarrinhoItem para os mapas necessários
-      for (var item in _itensCarrinho) {
-        // Obter o produto através do codprd usando o ProdutoDao
-        Produto? produto = await _obterProdutoPeloCodigo(item.codprd);
-
-        if (produto != null) {
-          // Adicionar ao mapa de produtos
-          _produtosMap[produto] = item.quantidade;
-
-          // Adicionar ao mapa de descontos
-          _descontos[produto] =
-              item.desconto * 100; // Convertendo para porcentagem
-        }
-      }
-
-      if (!_isDisposed) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ Erro ao inicializar dados: $e');
-      if (!_isDisposed) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = e.toString();
-        });
-      }
-    }
-  }
-
-  // Método para obter um produto pelo código usando o ProdutoDao
-  Future<Produto?> _obterProdutoPeloCodigo(int codprd) async {
-    try {
-      return await _produtoDao.getProdutoByCodigo(codprd);
-    } catch (e) {
-      debugPrint('❌ Erro ao obter produto $codprd: $e');
-      return null;
-    }
-  }
-
   // Método para atualizar o desconto de um produto
-  Future<void> atualizarDesconto(Produto produto, double novoDesconto) async {
+  Future<void> atualizarDesconto(ProdutoModel produto, double novoDesconto) async {
     if (_isDisposed) return;
 
-    setState(() {
-      // Validar o desconto (entre 0 e 100)
-      novoDesconto = novoDesconto.clamp(0.0, 100.0);
-      _descontos[produto] = novoDesconto;
-    });
-
-    try {
-      // Encontrar o item correspondente na lista
-      var itemIndex =
-          _itensCarrinho.indexWhere((item) => item.codprd == produto.codprd);
-
-      if (itemIndex >= 0) {
-        var item = _itensCarrinho[itemIndex];
-
-        // Criar item atualizado
-        final itemAtualizado = CarrinhoItem(
-          id: item.id,
-          codprd: item.codprd,
-          codcli: widget.codcli,
-          quantidade: item.quantidade,
-          desconto:
-              novoDesconto / 100, // Convertendo de porcentagem para decimal
-          finalizado: item.finalizado,
-          dataCriacao: item.dataCriacao,
-        );
-
-        // Atualizar na lista local
-        _itensCarrinho[itemIndex] = itemAtualizado;
-
-        // Salvar no banco de dados
-        await _carrinhoDao.salvarItem(itemAtualizado);
-      }
-    } catch (e) {
-      debugPrint('❌ Erro ao atualizar desconto: $e');
-    }
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    
+    // Validar o desconto (entre 0 e 100)
+    novoDesconto = novoDesconto.clamp(0.0, 100.0);
+    
+    // Atualizar o desconto no carrinho compartilhado
+    carrinhoProvider.descontos[produto] = novoDesconto;
+    
+    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
+    setState(() {});
+    
+    // Persistir as alterações no banco de dados
+    _persistirCarrinhoAposAlteracao(carrinhoProvider);
   }
 
   // Método para remover um produto do carrinho
-  Future<void> _removerProduto(Produto produto) async {
+  Future<void> _removerProduto(ProdutoModel produto) async {
     if (_isDisposed) return;
 
-    setState(() {
-      _produtosMap.remove(produto);
-      _descontos.remove(produto);
-      _itensCarrinho.removeWhere((item) => item.codprd == produto.codprd);
-    });
-
-    try {
-      await _carrinhoDao.removerItem(produto.codprd, widget.codcli);
-    } catch (e) {
-      debugPrint('❌ Erro ao remover produto: $e');
-    }
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    
+    // Remover produto do carrinho compartilhado
+    carrinhoProvider.itens.remove(produto);
+    carrinhoProvider.descontos.remove(produto);
+    
+    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
+    setState(() {});
+    
+    // Persistir as alterações no banco de dados
+    _persistirCarrinhoAposAlteracao(carrinhoProvider);
   }
 
   // Método para atualizar a quantidade de um produto
-  Future<void> _atualizarQuantidade(Produto produto, int quantidade) async {
+  Future<void> _atualizarQuantidade(ProdutoModel produto, int quantidade) async {
     if (_isDisposed) return;
+
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
 
     if (quantidade <= 0) {
       await _removerProduto(produto);
       return;
     }
 
-    setState(() {
-      _produtosMap[produto] = quantidade;
-    });
+    // Atualizar a quantidade no carrinho compartilhado
+    carrinhoProvider.itens[produto] = quantidade;
+    
+    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
+    setState(() {});
+    
+    // Persistir as alterações no banco de dados
+    _persistirCarrinhoAposAlteracao(carrinhoProvider);
+  }
 
-    try {
-      // Encontrar o item na lista
-      var itemIndex =
-          _itensCarrinho.indexWhere((item) => item.codprd == produto.codprd);
-
-      if (itemIndex >= 0) {
-        var item = _itensCarrinho[itemIndex];
-
-        // Criar item atualizado
-        final itemAtualizado = CarrinhoItem(
-          id: item.id,
-          codprd: item.codprd,
-          codcli: widget.codcli,
-          quantidade: quantidade,
-          desconto:
-              (_descontos[produto] ?? 0.0) / 100, // Convertendo para decimal
-          finalizado: item.finalizado,
-          dataCriacao: item.dataCriacao,
+  // Método auxiliar para persistir alterações do carrinho
+  void _persistirCarrinhoAposAlteracao(Carrinho carrinhoProvider) {
+    if (widget.cliente == null) return;
+    
+    _carrinhoService.salvarAlteracoesCarrinho(carrinhoProvider, widget.cliente!)
+        .then((result) {
+      if (!result.isSuccess && mounted) {
+        _logger.e("Falha ao salvar carrinho no banco: ${result.errorMessage}");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Erro ao salvar alteração: ${result.errorMessage}"),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          )
         );
-
-        // Atualizar na lista local
-        _itensCarrinho[itemIndex] = itemAtualizado;
-
-        // Salvar no banco de dados
-        await _carrinhoDao.salvarItem(itemAtualizado);
       }
-    } catch (e) {
-      debugPrint('❌ Erro ao atualizar quantidade: $e');
-    }
-  }
-
-  // Calcula o total do carrinho sem descontos
-  double get _totalSemDesconto {
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-
-    return _produtosMap.entries.fold(
-      0,
-      (total, item) {
-        double preco = tabelaPreco == 1 ? item.key.vlrtab1 : item.key.vlrtab2;
-        return total + (preco * item.value);
-      },
-    );
-  }
-
-  // Calcula o total com os descontos aplicados
-  double get _totalComDesconto {
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-
-    return _produtosMap.entries.fold(
-      0,
-      (total, item) {
-        double preco = tabelaPreco == 1 ? item.key.vlrtab1 : item.key.vlrtab2;
-        double desconto = _descontos[item.key] ?? 0.0;
-
-        double precoComDesconto = preco * (1 - desconto / 100);
-        return total + (precoComDesconto * item.value);
-      },
-    );
+    });
   }
 
   @override
@@ -402,11 +278,15 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         elevation: 0,
         centerTitle: true,
       ),
-      body: _buildBody(),
+      body: Consumer<Carrinho>(
+        builder: (context, carrinhoProvider, child) {
+          return _buildBody(carrinhoProvider);
+        },
+      ),
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(Carrinho carrinhoProvider) {
     if (_isLoading) {
       return _buildLoadingState();
     }
@@ -415,11 +295,11 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       return _buildErrorState();
     }
 
-    if (_isEmpty) {
+    if (carrinhoProvider.isEmpty) {
       return _buildEmptyCart();
     }
 
-    return _buildCartContent();
+    return _buildCartContent(carrinhoProvider);
   }
 
   Widget _buildLoadingState() {
@@ -475,7 +355,11 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                onPressed: _inicializarDados,
+                onPressed: () {
+                  setState(() {
+                    _errorMessage = null;
+                  });
+                },
                 child: const Text('Tentar novamente'),
               ),
             ),
@@ -528,7 +412,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(context).pop(true), // Pass true to reload products
               ),
             ),
           ],
@@ -537,7 +421,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Widget _buildCartContent() {
+  Widget _buildCartContent(Carrinho carrinhoProvider) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -546,11 +430,11 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
         // Cart items list
         Expanded(
-          child: _buildCartItemsList(),
+          child: _buildCartItemsList(carrinhoProvider),
         ),
 
         // Cart summary
-        _buildCartSummary(),
+        _buildCartSummary(carrinhoProvider),
       ],
     );
   }
@@ -614,22 +498,24 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Widget _buildCartItemsList() {
+  Widget _buildCartItemsList(Carrinho carrinhoProvider) {
+    final produtos = carrinhoProvider.itens.keys.toList();
+    
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      itemCount: _produtosMap.length,
+      itemCount: produtos.length,
       itemBuilder: (context, index) {
-        final produto = _produtosMap.keys.elementAt(index);
-        return _buildCartItem(produto);
+        final produto = produtos[index];
+        return _buildCartItem(produto, carrinhoProvider);
       },
     );
   }
 
-  Widget _buildCartItem(Produto produto) {
+  Widget _buildCartItem(ProdutoModel produto, Carrinho carrinhoProvider) {
     final int tabelaPreco = widget.cliente?.codtab ?? 1;
-    final int quantidade = _produtosMap[produto] ?? 0;
-    final double preco = tabelaPreco == 1 ? produto.vlrtab1 : produto.vlrtab2;
-    final double desconto = _descontos[produto] ?? 0.0;
+    final int quantidade = carrinhoProvider.itens[produto] ?? 0;
+    final double preco = produto.getPrecoParaTabela(tabelaPreco);
+    final double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
     final double precoComDesconto = preco * (1 - desconto / 100);
 
     return Container(
@@ -774,8 +660,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                         _buildQuantityButton(
                           Icons.remove,
                           quantidade > 1
-                              ? () =>
-                                  _atualizarQuantidade(produto, quantidade - 1)
+                              ? () => _atualizarQuantidade(produto, quantidade - 1)
                               : null,
                         ),
                         Container(
@@ -938,7 +823,21 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Widget _buildCartSummary() {
+  Widget _buildCartSummary(Carrinho carrinhoProvider) {
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
+    
+    // Implementação do método ausente para calcular o subtotal sem desconto
+    double calcularSubtotalSemDesconto() {
+      double total = 0.0;
+      carrinhoProvider.itens.forEach((produto, quantidade) {
+        total += produto.getPrecoParaTabela(tabelaPreco) * quantidade;
+      });
+      return total;
+    }
+    
+    final double totalSemDesconto = calcularSubtotalSemDesconto();
+    final double totalComDesconto = carrinhoProvider.calcularValorTotal(tabelaPreco);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -968,7 +867,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                   ),
                 ),
                 Text(
-                  'R\$ ${_totalSemDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                  'R\$ ${totalSemDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -976,7 +875,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                 ),
               ],
             ),
-            if (_totalSemDesconto > _totalComDesconto) ...[
+            if (totalSemDesconto > totalComDesconto) ...[
               const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -989,7 +888,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                     ),
                   ),
                   Text(
-                    '-R\$ ${(_totalSemDesconto - _totalComDesconto).toStringAsFixed(2).replaceAll('.', ',')}',
+                    '-R\$ ${(totalSemDesconto - totalComDesconto).toStringAsFixed(2).replaceAll('.', ',')}',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
@@ -1013,7 +912,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                   ),
                 ),
                 Text(
-                  'R\$ ${_totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                  'R\$ ${totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w600,
@@ -1030,7 +929,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                 if (widget.cliente == null) {
                   _mostrarErroClienteNaoAssociado();
                 } else {
-                  _mostrarDialogoTransferirCarrinho();
+                  _mostrarDialogoTransferirCarrinho(carrinhoProvider);
                 }
               },
               style: ElevatedButton.styleFrom(
@@ -1073,7 +972,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Future<void> _mostrarDialogoTransferirCarrinho() async {
+  Future<void> _mostrarDialogoTransferirCarrinho(Carrinho carrinhoProvider) async {
     if (!mounted) return;
 
     String observacao = '';
@@ -1187,7 +1086,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text("Itens:"),
-                          Text("${_produtosMap.length}"),
+                          Text("${carrinhoProvider.itens.length}"),
                         ],
                       ),
                       const SizedBox(height: 4),
@@ -1196,7 +1095,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                         children: [
                           const Text("Total:"),
                           Text(
-                            "R\$ ${_totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}",
+                            "R\$ ${carrinhoProvider.calcularValorTotal(widget.cliente?.codtab ?? 1).toStringAsFixed(2).replaceAll('.', ',')}",
                             style: const TextStyle(
                               fontWeight: FontWeight.w500,
                               color: Color(0xFF5D5CDE),
@@ -1322,9 +1221,10 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
                     Navigator.pop(context);
                     _transferirCarrinho(
+                      carrinhoProvider: carrinhoProvider,
                       observacao: obs,
                       formaPagamento: codPagto,
-                      formaPagamentoDesc: descPagto, // Added the description
+                      formaPagamentoDesc: descPagto,
                     );
                   },
                   child: const Text("Transferir"),
@@ -1338,53 +1238,20 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  // Método para marcar os itens como finalizados no banco de dados
-Future<void> _finalizarItensCarrinho() async {
-  try {
-    // Marcar todos os itens como finalizados
-    int itensAtualizados = await _carrinhoDao.finalizarCarrinho(widget.codcli);
-    
-    // Para garantir limpeza, remover itens finalizados
-    await _carrinhoDao.limparItensFinalizados(widget.codcli);
-    
-    // Verificação final para garantir que não há itens pendentes
-    bool aindaExistemItens = await _carrinhoDao.existeCarrinhoPendente(widget.codcli);
-    
-    if (aindaExistemItens) {
-      debugPrint('⚠️ Atenção: Ainda existem itens não finalizados após a operação!');
-    } else {
-      debugPrint('✅ Carrinho completamente finalizado e limpo');
-    }
-    
-    if (!_isDisposed) {
-      setState(() {
-        for (var item in _itensCarrinho) {
-          item.finalizado = 1;
-        }
-      });
-    }
-  } catch (e) {
-    debugPrint('❌ Erro ao finalizar itens: $e');
-  }
-}
-
-  // Método para gerar PDF com dados salvos antes de finalizar o carrinho
-  Future<void> _gerarPDFComDadosSalvos({
-    required List<CarrinhoItem> itensSalvos,
-    required Map<Produto, int> produtosSalvos,
-    required Map<Produto, double> descontosSalvos,
-    required BuildContext contextAtual,
+  // Método para transferir o carrinho (enviar POST)
+  Future<void> _transferirCarrinho({
+    required Carrinho carrinhoProvider,
     String observacao = '',
-    String nomeVendedor = '',
-    String nomeClienteResponsavel = '',
-    String emailCliente = '',
-    String formaPagamento = '',
-    String numPedido = '',
+    String formaPagamento = '1',
+    String formaPagamentoDesc = 'A VISTA',
   }) async {
-    // Diálogo de contexto para progresso
-    BuildContext? dialogContext;
+    if (!mounted) return;
 
-    // Mostrar progresso
+    final int tabelaPreco = widget.cliente?.codtab ?? 1;
+    final BuildContext contextAtual = context;
+
+    // Mostrar diálogo de progresso
+    BuildContext? dialogContext;
     showDialog(
       context: contextAtual,
       barrierDismissible: false,
@@ -1394,212 +1261,6 @@ Future<void> _finalizarItensCarrinho() async {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text("Gerando PDF..."),
-            ],
-          ),
-        );
-      },
-    );
-
-    try {
-      if (produtosSalvos.isEmpty) {
-        // Fechar diálogo de progresso
-        if (dialogContext != null &&
-            Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
-          Navigator.of(dialogContext!, rootNavigator: true).pop();
-        }
-
-        if (mounted) {
-          ScaffoldMessenger.of(contextAtual).showSnackBar(
-            SnackBar(
-              content: const Text("Não há dados para gerar o PDF"),
-              backgroundColor: Colors.red[700],
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-          // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-          Navigator.of(contextAtual).pop(false);
-        }
-        return;
-      }
-
-      // Find the payment method description if we only have the code
-      String formaPagamentoDesc = formaPagamento;
-      if (formaPagamento.isNotEmpty && _condicoesPagamento.isNotEmpty) {
-        try {
-          // Try to convert to int to check if it's a code
-          final codeAsInt = int.tryParse(formaPagamento);
-          if (codeAsInt != null) {
-            // It's a code, find the description
-            final paymentMethod = _condicoesPagamento.firstWhere(
-              (cp) => cp.codcndpgt == codeAsInt,
-              orElse: () => CondicaoPagamento(
-                codcndpgt: codeAsInt,
-                dcrcndpgt: formaPagamento,
-                perdsccel: 0,
-                staati: "S"
-              )
-            );
-            formaPagamentoDesc = paymentMethod.dcrcndpgt;
-          }
-        } catch (e) {
-          debugPrint('⚠️ Aviso ao transformar código de pagamento: $e');
-        }
-      }
-
-      // Gerar PDF com os mapas salvos
-      final filePath = await PdfGeneratorSimples.gerarPdfSimples(
-        produtosSalvos,
-        descontosSalvos,
-        widget.cliente,
-        observacao,
-        nomeVendedor,
-        nomeClienteResponsavel,
-        emailCliente,
-        formaPagamentoDesc, // Using description instead of code
-        numPedido,
-      );
-
-      // Fechar diálogo de progresso
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      if (!mounted) return;
-
-      if (filePath != null) {
-        // Mostrar diálogo de sucesso com opções
-        await showDialog(
-          context: contextAtual,
-          builder: (BuildContext context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.green[600], size: 24),
-                const SizedBox(width: 8),
-                const Text("PDF Gerado", style: TextStyle(fontSize: 18)),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("O arquivo foi salvo com sucesso!"),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    filePath,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[700],
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-                  if (mounted) {
-                    Navigator.of(contextAtual).pop(false);
-                  }
-                },
-                child: const Text("OK"),
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.share, size: 18),
-                label: const Text("Compartilhar"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5D5CDE),
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await PdfGeneratorSimples.compartilharArquivo(filePath);
-                  // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-                  if (mounted) {
-                    Navigator.of(contextAtual).pop(false);
-                  }
-                },
-              ),
-            ],
-          ),
-        );
-      } else {
-        // Mostrar erro
-        if (mounted) {
-          ScaffoldMessenger.of(contextAtual).showSnackBar(
-            SnackBar(
-              content: const Text("Erro ao gerar PDF"),
-              backgroundColor: Colors.red[700],
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-          // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-          Navigator.of(contextAtual).pop(false);
-        }
-      }
-    } catch (e) {
-      // Fechar diálogo de progresso se estiver aberto
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      if (!mounted) return;
-
-      // Mostrar erro
-      ScaffoldMessenger.of(contextAtual).showSnackBar(
-        SnackBar(
-          content: Text("Erro ao gerar PDF: $e"),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-      Navigator.of(contextAtual).pop(false);
-    }
-  }
-
-  // Método para transferir o carrinho (enviar POST)
-  Future<void> _transferirCarrinho({
-    String observacao = '',
-    String formaPagamento = '1',
-    String formaPagamentoDesc = 'A VISTA', // Added payment description parameter
-  }) async {
-    if (!mounted) return;
-
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-    final BuildContext contextAtual = context;
-
-    // Salvar uma cópia dos itens do carrinho para usar no PDF posteriormente
-    final List<CarrinhoItem> itensSalvos = List.from(_itensCarrinho);
-    final Map<Produto, int> produtosSalvos = Map.from(_produtosMap);
-    final Map<Produto, double> descontosSalvos = Map.from(_descontos);
-
-    // Mostrar diálogo de progresso
-    BuildContext? dialogContext;
-    showDialog(
-      context: contextAtual,
-      barrierDismissible: false,
-      builder: (context) {
-        dialogContext = context;
-        return AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
               CircularProgressIndicator(),
               SizedBox(height: 20),
               Text("Transferindo dados do carrinho..."),
@@ -1613,9 +1274,9 @@ Future<void> _finalizarItensCarrinho() async {
       // Preparar a lista de produtos no formato requerido
       List<Map<String, dynamic>> produtosJson = [];
 
-      _produtosMap.forEach((produto, quantidade) {
-        double preco = tabelaPreco == 1 ? produto.vlrtab1 : produto.vlrtab2;
-        double desconto = _descontos[produto] ?? 0.0;
+      carrinhoProvider.itens.forEach((produto, quantidade) {
+        double preco = produto.getPrecoParaTabela(tabelaPreco);
+        double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
 
         produtosJson.add({
           "cod_produto": produto.codprd.toString(),
@@ -1646,16 +1307,16 @@ Future<void> _finalizarItensCarrinho() async {
         "id": idPedido,
         "data_pedido": dataPedido,
         "cod_cliente": widget.cliente?.codcli.toString() ?? "",
-        "vlr_pedido": _totalComDesconto,
+        "vlr_pedido": carrinhoProvider.calcularValorTotal(tabelaPreco),
         "cod_vendedor": "001", // Código do vendedor fixo
         "cod_condicao_pagto": formaPagamento,
-        "dcr_condicao_pagto": formaPagamentoDesc, // Added payment description
+        "dcr_condicao_pagto": formaPagamentoDesc,
         "observacao": observacao,
         "produtos": produtosJson,
       };
 
       // Logar o JSON que será enviado
-      debugPrint('📤 Enviando JSON: ${jsonEncode(dadosPedido)}');
+      _logger.i('Enviando JSON: ${jsonEncode(dadosPedido)}');
 
       // Enviar requisição POST
       final Uri uri =
@@ -1675,24 +1336,32 @@ Future<void> _finalizarItensCarrinho() async {
       }
 
       // Verificar resposta
-      debugPrint('📥 Resposta (${response.statusCode}): ${response.body}');
+      _logger.i('Resposta (${response.statusCode}): ${response.body}');
+
+      if (!mounted) return; // Added mounted check after async operation
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Transferência bem-sucedida - Marcar itens como finalizados IMEDIATAMENTE
-        await _finalizarItensCarrinho();
+        // Transferência bem-sucedida - Marcar itens como finalizados ATRAVÉS DO SERVICE
+        final resultado = await _carrinhoService.finalizarCarrinho(widget.cliente!);
+        
+        if (!mounted) return; // Added mounted check after async operation
+        
+        if (!resultado.isSuccess) {
+          _logger.e('Erro ao finalizar carrinho: ${resultado.errorMessage}');
+          _mostrarErroFinalizacaoCarrinho(resultado.errorMessage ?? 'Erro desconhecido');
+          return;
+        }
 
-        // Verificar se o widget ainda está montado
-        if (!mounted) return;
+        // Limpar o carrinho na memória (Provider)
+        Provider.of<Carrinho>(contextAtual, listen: false).limpar();
 
         // Mostrar mensagem de sucesso
         await _mostrarDialogoSucesso(
           contextAtual, 
           numPedido, 
-          itensSalvos,
-          produtosSalvos, 
-          descontosSalvos, 
+          carrinhoProvider, 
           observacao,
-          formaPagamentoDesc, // Pass description instead of code
+          formaPagamentoDesc,
         );
       } else {
         // Erro na transferência
@@ -1710,19 +1379,31 @@ Future<void> _finalizarItensCarrinho() async {
 
       // Mostrar diálogo de erro de conexão
       await _mostrarDialogoErroConexao(
-          contextAtual, e, observacao, formaPagamento);
+          contextAtual, e, observacao, formaPagamento, carrinhoProvider);
     }
+  }
+
+  void _mostrarErroFinalizacaoCarrinho(String mensagem) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Erro ao finalizar carrinho no banco: $mensagem'),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Future<void> _mostrarDialogoSucesso(
     BuildContext contextAtual,
     String numPedido,
-    List<CarrinhoItem> itensSalvos,
-    Map<Produto, int> produtosSalvos,
-    Map<Produto, double> descontosSalvos,
+    Carrinho carrinhoProvider,
     String observacao,
-    String formaPagamentoDesc, // Add payment method description
+    String formaPagamentoDesc,
   ) async {
+    if (!mounted) return; // Added mounted check
+    
     await showDialog(
       context: contextAtual,
       barrierDismissible: false,
@@ -1840,10 +1521,8 @@ Future<void> _finalizarItensCarrinho() async {
                 TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
-                    // Modificado: Sinalizar que não há necessidade de recarregar carrinho
-                    if (mounted) {
-                      Navigator.of(contextAtual).pop(false);
-                    }
+                    // Sinalizar que não há necessidade de recarregar carrinho
+                    Navigator.of(contextAtual).pop(false);
                   },
                   child: const Text("OK"),
                 ),
@@ -1857,13 +1536,11 @@ Future<void> _finalizarItensCarrinho() async {
                   onPressed: () {
                     Navigator.of(context).pop();
                     _gerarPDFComDadosSalvos(
-                      itensSalvos: itensSalvos,
-                      produtosSalvos: produtosSalvos,
-                      descontosSalvos: descontosSalvos,
+                      carrinhoProvider: carrinhoProvider,
                       observacao: observacao,
                       contextAtual: contextAtual,
                       numPedido: numPedido,
-                      formaPagamento: formaPagamentoDesc, // Pass payment description
+                      formaPagamento: formaPagamentoDesc,
                     );
                   },
                 ),
@@ -1875,11 +1552,197 @@ Future<void> _finalizarItensCarrinho() async {
     );
   }
 
+  // Método para gerar PDF com dados do Provider
+  Future<void> _gerarPDFComDadosSalvos({
+    required Carrinho carrinhoProvider,
+    required BuildContext contextAtual,
+    String observacao = '',
+    String nomeVendedor = '',
+    String nomeClienteResponsavel = '',
+    String emailCliente = '',
+    String formaPagamento = '',
+    String numPedido = '',
+  }) async {
+    if (!mounted) return; // Added mounted check
+    
+    // Diálogo de contexto para progresso
+    BuildContext? dialogContext;
+
+    // Mostrar progresso
+    showDialog(
+      context: contextAtual,
+      barrierDismissible: false,
+      builder: (context) {
+        dialogContext = context;
+        return const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 20),
+              Text("Gerando PDF..."),
+            ],
+          ),
+        );
+      },
+    );
+
+    try {
+      if (carrinhoProvider.isEmpty) {
+        // Fechar diálogo de progresso
+        if (dialogContext != null &&
+            Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+          Navigator.of(dialogContext!, rootNavigator: true).pop();
+        }
+
+        if (!mounted) return; // Added mounted check
+        
+        ScaffoldMessenger.of(contextAtual).showSnackBar(
+          SnackBar(
+            content: const Text("Não há dados para gerar o PDF"),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        // Sinalizar que não há necessidade de recarregar carrinho
+        Navigator.of(contextAtual).pop(false);
+        return;
+      }
+
+      // Converter os dados do provider para o formato esperado pelo gerador de PDF
+      final Map<ProdutoModel, int> produtosSalvos = Map.from(carrinhoProvider.itens);
+      final Map<ProdutoModel, double> descontosSalvos = Map.from(carrinhoProvider.descontos);
+
+      // Gerar PDF com os mapas do provider
+      final filePath = await PdfGeneratorSimples.gerarPdfSimples(
+        produtosSalvos,
+        descontosSalvos,
+        widget.cliente,
+        observacao,
+        nomeVendedor,
+        nomeClienteResponsavel,
+        emailCliente,
+        formaPagamento,
+        numPedido,
+      );
+
+      // Fechar diálogo de progresso
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      }
+
+      if (!mounted) return; // Added mounted check
+
+      if (filePath != null) {
+        // Mostrar diálogo de sucesso com opções
+        await showDialog(
+          context: contextAtual,
+          builder: (BuildContext context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.picture_as_pdf, color: Colors.green[600], size: 24),
+                const SizedBox(width: 8),
+                const Text("PDF Gerado", style: TextStyle(fontSize: 18)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("O arquivo foi salvo com sucesso!"),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    filePath,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[700],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  // Sinalizar que não há necessidade de recarregar carrinho
+                  Navigator.of(contextAtual).pop(false);
+                },
+                child: const Text("OK"),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.share, size: 18),
+                label: const Text("Compartilhar"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF5D5CDE),
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  Navigator.of(context).pop();
+                  await PdfGeneratorSimples.compartilharArquivo(filePath);
+                  
+                  if (!mounted) return; // Added mounted check
+                  
+                  // Sinalizar que não há necessidade de recarregar carrinho
+                  Navigator.of(contextAtual).pop(false);
+                },
+              ),
+            ],
+          ),
+        );
+      } else {
+        // Mostrar erro
+        if (!mounted) return; // Added mounted check
+        
+        ScaffoldMessenger.of(contextAtual).showSnackBar(
+          SnackBar(
+            content: const Text("Erro ao gerar PDF"),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        // Sinalizar que não há necessidade de recarregar carrinho
+        Navigator.of(contextAtual).pop(false);
+      }
+    } catch (e) {
+      // Fechar diálogo de progresso se estiver aberto
+      if (dialogContext != null &&
+          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        Navigator.of(dialogContext!, rootNavigator: true).pop();
+      }
+
+      if (!mounted) return; // Added mounted check
+
+      // Mostrar erro
+      ScaffoldMessenger.of(contextAtual).showSnackBar(
+        SnackBar(
+          content: Text("Erro ao gerar PDF: $e"),
+          backgroundColor: Colors.red[700],
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      // Sinalizar que não há necessidade de recarregar carrinho
+      Navigator.of(contextAtual).pop(false);
+    }
+  }
+
   Future<void> _mostrarDialogoErro(
     BuildContext contextAtual,
     http.Response response,
     Map<String, dynamic> dadosPedido,
   ) async {
+    if (!mounted) return; // Added mounted check
+    
     // Tentar analisar a resposta de erro como JSON
     Map<String, dynamic>? responseJson;
     String errorMessage = "Erro desconhecido";
@@ -1896,9 +1759,6 @@ Future<void> _finalizarItensCarrinho() async {
           ? response.body
           : "Erro ao transferir carrinho (Código: ${response.statusCode})";
     }
-
-    // Verificar se o widget ainda está montado
-    if (!mounted) return;
 
     // Exibir detalhes do erro em diálogo simplificado
     await showDialog(
@@ -1974,7 +1834,10 @@ Future<void> _finalizarItensCarrinho() async {
     dynamic error,
     String observacao,
     String formaPagamento,
+    Carrinho carrinhoProvider,
   ) async {
+    if (!mounted) return; // Added mounted check
+    
     await showDialog(
       context: contextAtual,
       builder: (BuildContext context) => AlertDialog(
@@ -2004,10 +1867,10 @@ Future<void> _finalizarItensCarrinho() async {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: Colors.red[100]!),
               ),
-              child: Column(
+              child: const Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     "Verifique sua conexão com a internet e tente novamente.",
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
@@ -2028,6 +1891,7 @@ Future<void> _finalizarItensCarrinho() async {
               Navigator.of(context).pop();
               if (mounted) {
                 _transferirCarrinho(
+                  carrinhoProvider: carrinhoProvider,
                   observacao: observacao,
                   formaPagamento: formaPagamento,
                 );

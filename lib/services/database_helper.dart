@@ -1,17 +1,26 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'package:logger/logger.dart'; // Adicionado para logging interno
 
 class DatabaseHelper {
   static const String _databaseName = "docig_venda.db";
-  // Vamos assumir que a introdução correta das tabelas do carrinho
-  // acontecerá a partir da versão 6 para simplificar o exemplo de upgrade.
-  // Se você já liberou a versão 5 e ela não tinha as tabelas de carrinho corretas,
-  // você precisará de uma lógica de upgrade mais cuidadosa.
-  // Por agora, vou manter como 5, mas tenha em mente a lógica de _onUpgrade.
-  static const int _databaseVersion = 5; // Ou 6 se você estiver introduzindo as tabelas de carrinho agora
+  // Verifique se esta versão é maior que a anterior no dispositivo do usuário
+  // se você já distribuiu o app antes com o erro.
+  static const int _databaseVersion = 6; // Mantenha ou incremente conforme necessário
+
+  // --- Constantes com Nomes de Tabelas ---
+  static const String tableProdutos = 'produtos';
+  static const String tableClientes = 'clientes';
+  static const String tableDuplicata = 'duplicata';
+  static const String tableCondicaoPagamento = 'condicao_pagamento';
+  static const String tableConfig = 'config';
+  static const String tableCarrinhos = 'carrinhos';
+  static const String tableCarrinhoItens = 'carrinho_itens';
+  // static const String tableCupons = 'cupons'; // Se existir
 
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
+  final Logger _logger = Logger(); // Instância do Logger
 
   DatabaseHelper._init();
 
@@ -23,25 +32,74 @@ class DatabaseHelper {
 
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), _databaseName);
+    _logger.i("Abrindo banco de dados em: $path");
     return await openDatabase(
       path,
       version: _databaseVersion,
+      onConfigure: _onConfigure,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      // Habilitar chaves estrangeiras é importante para ON DELETE CASCADE funcionar
-      onConfigure: _onConfigure,
+      onDowngrade: onDatabaseDowngradeDelete, // Estratégia para downgrade
     );
   }
 
-  // É uma boa prática habilitar o suporte a chaves estrangeiras explicitamente.
   Future<void> _onConfigure(Database db) async {
+    _logger.i("Configurando banco de dados - Habilitando chaves estrangeiras.");
     await db.execute('PRAGMA foreign_keys = ON');
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // Criação das tabelas existentes
-    await db.execute('''
-    CREATE TABLE produtos (
+    _logger.i("Criando banco de dados versão $version...");
+    // Usar Batch para executar múltiplos comandos de uma vez (mais eficiente)
+    var batch = db.batch();
+
+    _createProdutosTable(batch);
+    _createClientesTable(batch); // Chamando método corrigido
+    _createDuplicataTable(batch);
+    _createCondicaoPagamentoTable(batch);
+    _createConfigTable(batch);
+    _createCarrinhosTable(batch);
+    _createCarrinhoItensTable(batch);
+
+    await batch.commit();
+    _logger.i("Banco de dados criado com sucesso.");
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    _logger.w("Atualizando banco de dados da versão $oldVersion para $newVersion...");
+    // Implemente a lógica de migração baseada nas versões.
+    // Exemplo: Se as tabelas de carrinho foram adicionadas na versão 6.
+    if (oldVersion < 6) {
+       _logger.i("Aplicando migração para versão 6: Criando tabelas de carrinho...");
+       var batch = db.batch();
+      _createCarrinhosTable(batch);
+      _createCarrinhoItensTable(batch);
+      await batch.commit();
+       _logger.i("Tabelas de carrinho criadas.");
+    }
+    if (oldVersion < 5) {
+        _logger.i("Aplicando migração para versão 5: Criando tabela config...");
+         var batch = db.batch();
+        _createConfigTable(batch);
+        await batch.commit();
+         _logger.i("Tabela config criada.");
+    }
+    if (oldVersion < 4) {
+         _logger.i("Aplicando migração para versão 4: Criando tabela condicao_pagamento...");
+         var batch = db.batch();
+        _createCondicaoPagamentoTable(batch);
+        await batch.commit();
+         _logger.i("Tabela condicao_pagamento criada.");
+    }
+    // Adicione outras migrações conforme necessário
+     _logger.w("Atualização do banco de dados concluída.");
+  }
+
+  // --- Métodos de Criação de Tabela (usando Batch) ---
+
+  void _createProdutosTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE $tableProdutos (
       codprd INTEGER PRIMARY KEY AUTOINCREMENT,
       staati TEXT NOT NULL,
       dcrprd TEXT NOT NULL,
@@ -62,9 +120,13 @@ class DatabaseHelper {
       perdscmxm REAL NOT NULL
     );
     ''');
+    _logger.d("Comando CREATE TABLE $tableProdutos adicionado ao batch.");
+  }
 
-    await db.execute('''
-    CREATE TABLE clientes (
+  // ----- CORREÇÃO APLICADA AQUI -----
+  void _createClientesTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE $tableClientes (
       codcli INTEGER PRIMARY KEY AUTOINCREMENT,
       nomcli TEXT NOT NULL,
       cgccpfcli TEXT NOT NULL,
@@ -82,75 +144,44 @@ class DatabaseHelper {
       vlrsldlimcrd REAL NOT NULL,
       vlrdplabe REAL NOT NULL,
       vlrdplats REAL NOT NULL,
-      staati TEXT NOT NULL
-      -- Considere adicionar: FOREIGN KEY (codcndpgt) REFERENCES condicao_pagamento(codcndpgt)
+      staati TEXT NOT NULL 
+      -- Comentário inválido // FOREIGN KEY... foi REMOVIDO daqui.
+      -- Se quiser adicionar a FK corretamente no futuro:
+      -- , FOREIGN KEY (codcndpgt) REFERENCES $tableCondicaoPagamento(codcndpgt)
     );
     ''');
+     _logger.d("Comando CREATE TABLE $tableClientes adicionado ao batch.");
+  }
+  // ---------------------------------
 
-    await db.execute('''
-    CREATE TABLE duplicata (
+  void _createDuplicataTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE $tableDuplicata (
       numdoc TEXT PRIMARY KEY,
       codcli INTEGER NOT NULL,
       dtavct TEXT NOT NULL,
       vlrdpl REAL NOT NULL,
-      FOREIGN KEY (codcli) REFERENCES clientes (codcli) ON DELETE CASCADE
+      FOREIGN KEY (codcli) REFERENCES $tableClientes (codcli) ON DELETE CASCADE
     );
     ''');
-
-    // Chamadas para criar as tabelas mais recentes
-    await _createCondicaoPagamento(db);
-    await _createConfig(db); // Adicionada na versão 5 no seu código original
-
-    // Criação das tabelas do Carrinho
-    await _createCarrinhos(db);       // Tabela de cabeçalho do carrinho
-    await _createCarrinhoItens(db);   // Tabela de itens do carrinho
+     _logger.d("Comando CREATE TABLE $tableDuplicata adicionado ao batch.");
   }
 
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // A lógica de upgrade deve ser sequencial e cuidadosa.
-    // Cada 'if' deve conter apenas as alterações daquela versão específica.
-
-    if (oldVersion < 2) {
-        // Se havia algo na versão 2 (não especificado no seu código, mas seguindo seu padrão)
-        // await _upgradeToVersion2(db);
-    }
-    if (oldVersion < 3) {
-      // Na sua lógica original, oldVersion < 3 criava 'carrinho_itens' (que era 'carrinhos').
-      // Vamos assumir que as tabelas de carrinho são introduzidas "corretamente" numa versão posterior
-      // ou que estamos corrigindo agora. Se for uma correção, você pode precisar
-      // de DROP TABLE IF EXISTS para a antiga 'carrinhos' se ela foi criada erroneamente como itens.
-      // Por simplicidade, vamos criar se não existir, como se fosse uma nova adição.
-      await _createCarrinhos(db); // Adicionando a tabela de cabeçalho do carrinho
-      await _createCarrinhoItens(db); // Adicionando a tabela de itens do carrinho
-    }
-    if (oldVersion < 4) {
-      await _createCondicaoPagamento(db);
-    }
-    if (oldVersion < 5) {
-      await _createConfig(db);
-    }
-
-    // Exemplo: Se as tabelas de carrinho fossem novas na versão 6:
-    // if (oldVersion < 6) {
-    //   await _createCarrinhos(db);
-    //   await _createCarrinhoItens(db);
-    // }
-  }
-
-  Future<void> _createCondicaoPagamento(Database db) async {
-    await db.execute('''
-    CREATE TABLE IF NOT EXISTS condicao_pagamento (
+  void _createCondicaoPagamentoTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE IF NOT EXISTS $tableCondicaoPagamento (
       codcndpgt INTEGER PRIMARY KEY,
       dcrcndpgt TEXT NOT NULL,
       perdsccel REAL NOT NULL,
       staati TEXT NOT NULL
     );
     ''');
+     _logger.d("Comando CREATE TABLE IF NOT EXISTS $tableCondicaoPagamento adicionado ao batch.");
   }
 
-  Future<void> _createConfig(Database db) async {
-    await db.execute('''
-    CREATE TABLE IF NOT EXISTS config (
+  void _createConfigTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE IF NOT EXISTS $tableConfig (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       cod_vendedor TEXT NOT NULL,
       endereco_api TEXT NOT NULL,
@@ -159,12 +190,12 @@ class DatabaseHelper {
       senha TEXT NOT NULL
     );
     ''');
+     _logger.d("Comando CREATE TABLE IF NOT EXISTS $tableConfig adicionado ao batch.");
   }
 
-  // CORRIGIDO: Função para criar a tabela 'carrinhos' (cabeçalho)
-  Future<void> _createCarrinhos(Database db) async {
-    await db.execute('''
-    CREATE TABLE IF NOT EXISTS carrinhos (
+  void _createCarrinhosTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE IF NOT EXISTS $tableCarrinhos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       codcli INTEGER NOT NULL,
       data_criacao TEXT NOT NULL,
@@ -175,18 +206,17 @@ class DatabaseHelper {
       valor_total_descontos REAL,
       valor_total_liquido REAL,
       observacoes TEXT,
-      FOREIGN KEY (codcli) REFERENCES clientes(codcli) ON DELETE RESTRICT ON UPDATE CASCADE
-      -- FOREIGN KEY (cupom_desconto_id) REFERENCES cupons(id) -- Descomente se tiver tabela 'cupons'
+      FOREIGN KEY (codcli) REFERENCES $tableClientes(codcli) ON DELETE RESTRICT ON UPDATE CASCADE
+      
     );
     ''');
-    // Adicionar um índice em codcli e status pode ser bom para performance se você consultar muito por eles
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_carrinhos_codcli_status ON carrinhos (codcli, status);');
+    batch.execute('CREATE INDEX IF NOT EXISTS idx_carrinhos_codcli_status ON $tableCarrinhos (codcli, status);');
+     _logger.d("Comando CREATE TABLE IF NOT EXISTS $tableCarrinhos e INDEX adicionados ao batch.");
   }
 
-  // CORRIGIDO: Função para criar a tabela 'carrinho_itens'
-  Future<void> _createCarrinhoItens(Database db) async {
-    await db.execute('''
-    CREATE TABLE IF NOT EXISTS carrinho_itens (
+  void _createCarrinhoItensTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE IF NOT EXISTS $tableCarrinhoItens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       id_carrinho INTEGER NOT NULL,
       codprd INTEGER NOT NULL,
@@ -194,11 +224,11 @@ class DatabaseHelper {
       preco_unitario_registrado REAL NOT NULL,
       desconto_item REAL NOT NULL DEFAULT 0 CHECK (desconto_item >= 0),
       data_adicao TEXT NOT NULL,
-      FOREIGN KEY (id_carrinho) REFERENCES carrinhos(id) ON DELETE CASCADE ON UPDATE CASCADE,
-      FOREIGN KEY (codprd) REFERENCES produtos(codprd) ON DELETE RESTRICT ON UPDATE CASCADE
+      FOREIGN KEY (id_carrinho) REFERENCES $tableCarrinhos(id) ON DELETE CASCADE ON UPDATE CASCADE,
+      FOREIGN KEY (codprd) REFERENCES $tableProdutos(codprd) ON DELETE RESTRICT ON UPDATE CASCADE
     );
     ''');
-    // Índice para buscar itens de um carrinho específico rapidamente
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_carrinho_itens_id_carrinho ON carrinho_itens (id_carrinho);');
+    batch.execute('CREATE INDEX IF NOT EXISTS idx_carrinho_itens_id_carrinho ON $tableCarrinhoItens (id_carrinho);');
+     _logger.d("Comando CREATE TABLE IF NOT EXISTS $tableCarrinhoItens e INDEX adicionados ao batch.");
   }
 }

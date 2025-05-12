@@ -24,7 +24,7 @@ class ProdutoService {
   /// Busca todos os produtos disponíveis
 ///
 /// Retorna um [ApiResult] contendo a lista de produtos ou um erro
-Future<ApiResult<List<Produto>>> buscarProdutos() async {
+Future<ApiResult<List<ProdutoModel>>> buscarProdutos() async {
   try {
     final response = await _apiClient.get(
       _endpointPadrao,
@@ -41,8 +41,8 @@ Future<ApiResult<List<Produto>>> buscarProdutos() async {
     }
     
     // Converter manualmente para garantir o tipo correto
-    final produtos = jsonData.map((item) => Produto.fromJson(item)).toList();
-    return ApiResult<List<Produto>>.success(produtos);
+    final produtos = jsonData.map((item) => ProdutoModel.fromJson(item)).toList();
+    return ApiResult<List<ProdutoModel>>.success(produtos);
   } catch (e) {
     return ApiResult.error("Erro ao processar produtos: $e");
   }
@@ -52,10 +52,10 @@ Future<ApiResult<List<Produto>>> buscarProdutos() async {
   ///
   /// [codigo] O código único do produto
   /// Retorna um [ApiResult] contendo o produto ou um erro
-  Future<ApiResult<Produto?>> buscarProdutoPorCodigo(String codigo) async {
-    final result = await _apiClient.get<Produto?>(
+  Future<ApiResult<ProdutoModel?>> buscarProdutoPorCodigo(String codigo) async {
+    final result = await _apiClient.get<ProdutoModel?>(
       '$_endpointPadrao/$codigo',
-      fromJson: (json) => json != null ? Produto.fromJson(json) : null,
+      fromJson: (json) => json != null ? ProdutoModel.fromJson(json) : null,
     );
 
     return result;
@@ -65,16 +65,16 @@ Future<ApiResult<List<Produto>>> buscarProdutos() async {
   ///
   /// [termo] Termo a ser pesquisado nas descrições dos produtos
   /// Retorna um [ApiResult] contendo a lista de produtos encontrados ou um erro
-  Future<ApiResult<List<Produto>>> buscarProdutosPorDescricao(String termo) async {
+  Future<ApiResult<List<ProdutoModel>>> buscarProdutosPorDescricao(String termo) async {
     final termoCodificado = Uri.encodeComponent(termo);
     
-    final result = await _apiClient.get<List<Produto>>(
+    final result = await _apiClient.get<List<ProdutoModel>>(
       '$_endpointPadrao/busca/$termoCodificado',
       fromJson: (json) {
         if (json is List) {
-          return json.map((item) => Produto.fromJson(item)).toList();
+          return json.map((item) => ProdutoModel.fromJson(item)).toList();
         }
-        return <Produto>[];
+        return <ProdutoModel>[];
       },
     );
 

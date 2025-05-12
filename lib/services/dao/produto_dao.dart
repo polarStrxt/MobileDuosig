@@ -1,13 +1,13 @@
 import 'package:flutter_docig_venda/widgets/dao_generico.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 
-class ProdutoDao extends BaseDao<Produto> {
+class ProdutoDao extends BaseDao<ProdutoModel> {
   ProdutoDao() : super('produtos');
 
   @override
-  Future<List<Produto>> getAll(Function fromJson) async {
+  Future<List<ProdutoModel>> getAll(Function fromJson) async {
     try {
-      return await super.getAll((json) => Produto.fromJson(json));
+      return await super.getAll((json) => ProdutoModel.fromJson(json));
     } catch (e) {
       print("❌ Erro ao buscar todos os produtos: $e");
       return [];
@@ -15,14 +15,14 @@ class ProdutoDao extends BaseDao<Produto> {
   }
 
   // Buscar todos os produtos
-  Future<List<Produto>> getAllProdutos() async {
-    return await getAll((json) => Produto.fromJson(json));
+  Future<List<ProdutoModel>> getAllProdutos() async {
+    return await getAll((json) => ProdutoModel.fromJson(json));
   }
 
   // Buscar um produto pelo código
-  Future<Produto?> getProdutoByCodigo(int codigo) async {
+  Future<ProdutoModel?> getProdutoByCodigo(int codigo) async {
     try {
-      return await getById('codprd', codigo, (json) => Produto.fromJson(json));
+      return await getById('codprd', codigo, (json) => ProdutoModel.fromJson(json));
     } catch (e) {
       print("❌ Erro ao buscar produto pelo código ($codigo): $e");
       return null;
@@ -30,7 +30,7 @@ class ProdutoDao extends BaseDao<Produto> {
   }
 
   // Salvar ou atualizar um produto
-  Future<int> save(Produto produto) async {
+  Future<int> save(ProdutoModel produto) async {
     try {
       return await insertOrUpdate(produto.toJson(), 'codprd');
     } catch (e) {

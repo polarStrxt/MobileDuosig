@@ -1,53 +1,50 @@
 // lib/models/carrinho_item_model.dart
 
-class CarrinhoItem {
-  int? id; // ID único do item no carrinho
-  int codprd; // Código do produto
-  int codcli; // Código do cliente
+class CarrinhoItemModel {
+  int? id; // Pode ser nulo se ainda não foi salvo no banco
+  int idCarrinho;
+  int codprd;
   int quantidade;
-  double desconto; // Desconto em porcentagem
-  int finalizado; // 0 = não finalizado, 1 = finalizado
-  DateTime dataCriacao; // Data de criação do item
+  double precoUnitarioRegistrado;
+  double descontoItem;
+  DateTime dataAdicao;
 
-  CarrinhoItem({
+  CarrinhoItemModel({
     this.id,
+    required this.idCarrinho,
     required this.codprd,
-    required this.codcli,
     required this.quantidade,
-    this.desconto = 0.0,
-    this.finalizado = 0,
-    DateTime? dataCriacao,
-  }) : this.dataCriacao = dataCriacao ?? DateTime.now();
+    required this.precoUnitarioRegistrado,
+    this.descontoItem = 0.0,
+    required this.dataAdicao,
+  });
 
-  // Converter um objeto CarrinhoItem para Map (para salvar no banco)
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'codprd': codprd,
-      'codcli': codcli,
-      'quantidade': quantidade,
-      'desconto': desconto,
-      'finalizado': finalizado,
-      'data_criacao': dataCriacao.toIso8601String(),
-    };
-  }
-
-  // Criar um objeto CarrinhoItem a partir de um Map (ao ler do banco)
-  factory CarrinhoItem.fromJson(Map<String, dynamic> json) {
-    return CarrinhoItem(
-      id: json['id'],
-      codprd: json['codprd'],
-      codcli: json['codcli'],
-      quantidade: json['quantidade'],
-      desconto: json['desconto'],
-      finalizado: json['finalizado'],
-      dataCriacao: DateTime.parse(json['data_criacao']),
+  factory CarrinhoItemModel.fromJson(Map<String, dynamic> map) {
+    return CarrinhoItemModel(
+      id: map['id'] as int?,
+      idCarrinho: map['id_carrinho'] as int,
+      codprd: map['codprd'] as int,
+      quantidade: map['quantidade'] as int,
+      precoUnitarioRegistrado: map['preco_unitario_registrado'] as double,
+      descontoItem: map['desconto_item'] as double,
+      dataAdicao: DateTime.parse(map['data_adicao'] as String),
     );
   }
 
-  // Método para atualizar a quantidade
-  void incrementarQuantidade(int valor) {
-    quantidade += valor;
-    if (quantidade < 1) quantidade = 1;
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id, // SQLite lida com ID nulo em inserts para autoincremento
+      'id_carrinho': idCarrinho,
+      'codprd': codprd,
+      'quantidade': quantidade,
+      'preco_unitario_registrado': precoUnitarioRegistrado,
+      'desconto_item': descontoItem,
+      'data_adicao': dataAdicao.toIso8601String(),
+    };
+  }
+
+  // Helper para calcular subtotal do item, se útil
+  double get subtotal {
+    return (quantidade * precoUnitarioRegistrado) - descontoItem; // Assumindo que descontoItem é o valor total do desconto para a linha
   }
 }

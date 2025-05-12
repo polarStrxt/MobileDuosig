@@ -27,8 +27,8 @@ class PdfGeneratorSimples {
 
   // Método simples que apenas gera e salva o PDF sem tentar exibi-lo
   static Future<String?> gerarPdfSimples(
-    Map<Produto, int> itens,
-    Map<Produto, double> descontos, [
+    Map<ProdutoModel, int> itens,
+    Map<ProdutoModel, double> descontos, [
     Cliente? cliente,
     String observacao = '',
     String nomeVendedor = '',

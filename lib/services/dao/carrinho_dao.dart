@@ -1,197 +1,271 @@
-import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
-import 'package:flutter_docig_venda/widgets/dao_generico.dart';
+// lib/services/dao/carrinhos_dao.dart
+
 import 'package:sqflite/sqflite.dart';
+import 'package:logger/logger.dart'; // Para logging
+import 'package:flutter_docig_venda/services/database_helper.dart'; // Ajuste o caminho
+import 'package:flutter_docig_venda/models/carrinho_model.dart';   // Ajuste o caminho
+// import 'package:flutter_docig_venda/widgets/dao_generico.dart'; // Se você tem um BaseDao
 
-class CarrinhoDao extends BaseDao {
-  CarrinhoDao() : super('carrinho_itens');
+// Assumindo que BaseDao fornece 'Future<Database> get database'
+// class CarrinhosDao extends BaseDao {
+//   CarrinhosDao() : super(DatabaseHelper.tableCarrinhos);
 
-  @override
-  String get tableName => 'carrinho_itens';
+// Se você não tem BaseDao ou ele não é necessário aqui:
+class CarrinhosDao {
+  final Logger _logger = Logger();
+  final DatabaseHelper _dbHelper = DatabaseHelper.instance;
 
-  @override
-  Future<void> createTable(Database db) async {
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS $tableName (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        codprd INTEGER NOT NULL,
-        codcli INTEGER NOT NULL,
-        quantidade INTEGER NOT NULL CHECK (quantidade > 0),
-        desconto REAL NOT NULL CHECK (desconto >= 0),
-        finalizado INTEGER NOT NULL DEFAULT 0,
-        data_criacao TEXT NOT NULL
-      )
-    ''');
-  }
+  // Se BaseDao não exige createTable, remova este método.
+  // O DatabaseHelper já cuida da criação da tabela.
+  // @override
+  // Future<void> createTable(Database db) async {
+  //   // SQL DEVE SER IDÊNTICO AO DatabaseHelper._createCarrinhosTable
+  //   // É melhor centralizar a criação no DatabaseHelper.
+  // }
 
-  Future<int> salvarItem(CarrinhoItem item) async {
-    final db = await database;
-    return await db.transaction((txn) async {
+  Future<Database> get _database async => await _dbHelper.database;
+
+
+  // Criar um novo carrinho ou obter um carrinho aberto existente para um cliente
+  Future<CarrinhoModel?> getOuCriarCarrinhoAberto(int codcli) async {
+    final db = await _database;
+    CarrinhoModel? carrinho;
+
+    List<Map<String, dynamic>> existentes = await db.query(
+      DatabaseHelper.tableCarrinhos,
+      where: 'codcli = ? AND status = ?',
+      whereArgs: [codcli, 'aberto'],
+      limit: 1,
+    );
+
+    if (existentes.isNotEmpty) {
+      carrinho = CarrinhoModel.fromJson(existentes.first);
+      _logger.i("Carrinho aberto encontrado para cliente $codcli: id ${carrinho.id}");
+    } else {
+      DateTime agora = DateTime.now();
+      CarrinhoModel novoCarrinho = CarrinhoModel(
+        codcli: codcli,
+        dataCriacao: agora,
+        dataUltimaModificacao: agora,
+        status: 'aberto',
+      );
       try {
-        List<Map<String, dynamic>> existentes = await txn.query(
-          tableName,
-          where: 'codprd = ? AND codcli = ? AND finalizado = 0',
-          whereArgs: [item.codprd, item.codcli],
-        );
-
-        if (existentes.isNotEmpty) {
-          item.id = existentes.first['id'];
-          int novaQuantidade = existentes.first['quantidade'] +
-              item.quantidade; // Somar quantidade
-          await txn.update(
-            tableName,
-            {
-              'quantidade': novaQuantidade,
-              'desconto': item.desconto,
-            },
+        int idNovoCarrinho = await db.insert(DatabaseHelper.tableCarrinhos, novoCarrinho.toJson());
+        if (idNovoCarrinho > 0) {
+          // Busca o carrinho recém-criado para retornar o objeto completo com ID
+          List<Map<String, dynamic>> results = await db.query(
+            DatabaseHelper.tableCarrinhos,
             where: 'id = ?',
-            whereArgs: [item.id],
+            whereArgs: [idNovoCarrinho],
           );
-          return item.id!;
-        } else {
-          return await txn.insert(tableName, item.toJson());
+          if (results.isNotEmpty) {
+            carrinho = CarrinhoModel.fromJson(results.first);
+            _logger.d("Novo carrinho criado para cliente $codcli: id ${carrinho?.id}");
+          }
         }
-      } catch (e) {
-        print("\u274c Erro ao salvar item no carrinho: $e");
-        throw Exception("Erro ao salvar item no carrinho: $e");
-      }
-    });
-  }
-
-  Future<List<CarrinhoItem>> getItensCliente(int codcli,
-      {bool apenasNaoFinalizados = true}) async {
-    final db = await database;
-    try {
-      String whereClause =
-          apenasNaoFinalizados ? 'codcli = ? AND finalizado = 0' : 'codcli = ?';
-
-      List<Map<String, dynamic>> resultado = await db.query(
-        tableName,
-        where: whereClause,
-        whereArgs: [codcli],
-        orderBy: 'data_criacao DESC',
-      );
-
-      print("\u2705 Itens carregados do banco: $resultado"); // Log para debug
-      return resultado.map((map) => CarrinhoItem.fromJson(map)).toList();
-    } catch (e) {
-      print("\u274c Erro ao buscar itens do carrinho: $e");
-      return [];
-    }
-  }
-
-  // Método melhorado para finalizar o carrinho
-Future<int> finalizarCarrinho(int codcli) async {
-  final db = await database;
-  int itensAtualizados = 0;
-  try {
-    await db.transaction((txn) async {
-      itensAtualizados = await txn.update(
-        tableName,
-        {'finalizado': 1},
-        where: 'codcli = ? AND finalizado = 0',
-        whereArgs: [codcli],
-      );
-    });
-    
-    print("\u2705 Carrinho finalizado para cliente $codcli. $itensAtualizados itens atualizados.");
-    
-    // Verificar após a atualização
-    List<Map<String, dynamic>> itemsAposFinalizacao = await db.query(
-      tableName,
-      where: 'codcli = ? AND finalizado = 0',
-      whereArgs: [codcli],
-    );
-    
-    if (itemsAposFinalizacao.isNotEmpty) {
-      print("\u26A0 ATENÇÃO: Ainda existem ${itemsAposFinalizacao.length} itens não finalizados após a operação!");
-      
-      // Tentar finalizar item por item se a operação em massa falhou
-      for (var item in itemsAposFinalizacao) {
-        await db.update(
-          tableName,
-          {'finalizado': 1},
-          where: 'id = ?',
-          whereArgs: [item['id']],
-        );
-        itensAtualizados++;
+      } catch (e, s) {
+        _logger.e("Erro ao criar novo carrinho para cliente $codcli", error: e, stackTrace: s);
       }
     }
-    
-    return itensAtualizados;
-  } catch (e) {
-    print("\u274c Erro ao finalizar carrinho: $e");
-    return 0;
+    return carrinho;
   }
-}
 
-// Novo método para limpar todos os itens finalizados (para evitar acumulação)
-Future<int> limparItensFinalizados(int codcli) async {
-  final db = await database;
-  try {
-    int count = await db.delete(
-      tableName,
-      where: 'codcli = ? AND finalizado = 1',
-      whereArgs: [codcli],
+  Future<CarrinhoModel?> getCarrinhoPorId(int idCarrinho) async {
+    final db = await _database;
+    List<Map<String, dynamic>> maps = await db.query(
+      DatabaseHelper.tableCarrinhos,
+      where: 'id = ?',
+      whereArgs: [idCarrinho],
+      limit: 1,
     );
-    print("\u2705 Removidos $count itens finalizados para o cliente $codcli");
-    return count;
-  } catch (e) {
-    print("\u274c Erro ao limpar itens finalizados: $e");
-    return 0;
+    if (maps.isNotEmpty) {
+      return CarrinhoModel.fromJson(maps.first);
+    }
+    _logger.w("Nenhum carrinho encontrado com ID: $idCarrinho");
+    return null;
   }
-}
 
-// Método para verificar se existe um carrinho pendente
-Future<bool> existeCarrinhoPendente(int codcli) async {
-  final db = await database;
-  try {
-    var result = await db.rawQuery(
-      'SELECT COUNT(*) as count FROM $tableName WHERE codcli = ? AND finalizado = 0',
-      [codcli]
-    );
-    int count = Sqflite.firstIntValue(result) ?? 0;
-    return count > 0;
-  } catch (e) {
-    print("\u274c Erro ao verificar carrinho pendente: $e");
-    return false;
-  }
-}
-
-  Future<bool> removerItem(int codprd, int codcli) async {
-    final db = await database;
+  Future<bool> atualizarStatusCarrinho(int idCarrinho, String novoStatus) async {
+    final db = await _database;
     try {
-      int resultado = await db.delete(
-        tableName,
-        where: 'codprd = ? AND codcli = ? AND finalizado = 0',
-        whereArgs: [codprd, codcli],
+      int count = await db.update(
+        DatabaseHelper.tableCarrinhos,
+        {
+          'status': novoStatus,
+          'data_ultima_modificacao': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [idCarrinho],
       );
-      return resultado > 0;
-    } catch (e) {
-      print("\u274c Erro ao remover item do carrinho: $e");
+      if (count > 0) {
+        _logger.i("Status do carrinho $idCarrinho atualizado para '$novoStatus'.");
+        return true;
+      }
+      _logger.w("Nenhum carrinho atualizado. ID: $idCarrinho, Novo Status: $novoStatus");
+      return false;
+    } catch (e, s) {
+      _logger.e("Erro ao atualizar status do carrinho $idCarrinho", error: e, stackTrace: s);
       return false;
     }
   }
 
-  Future<bool> limparCarrinho(int codcli) async {
-    final db = await database;
+  Future<bool> atualizarObservacoesCarrinho(int idCarrinho, String observacoes) async {
+    final db = await _database;
+     try {
+      int count = await db.update(
+        DatabaseHelper.tableCarrinhos,
+        {
+          'observacoes': observacoes,
+          'data_ultima_modificacao': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [idCarrinho],
+      );
+       if (count > 0) {
+        _logger.i("Observações do carrinho $idCarrinho atualizadas.");
+        return true;
+      }
+      _logger.w("Nenhuma observação de carrinho atualizada. ID: $idCarrinho");
+      return false;
+    } catch (e, s) {
+      _logger.e("Erro ao atualizar observações do carrinho $idCarrinho", error: e, stackTrace: s);
+      return false;
+    }
+  }
+  
+  // Método para atualizar os totais no carrinho (se você decidir armazená-los)
+  Future<bool> atualizarTotaisCarrinho(int idCarrinho, {double? bruto, double? descontos, double? liquido}) async {
+    final db = await _database;
+    Map<String, dynamic> dataToUpdate = {
+        'data_ultima_modificacao': DateTime.now().toIso8601String(),
+    };
+    if (bruto != null) dataToUpdate['valor_total_bruto'] = bruto;
+    if (descontos != null) dataToUpdate['valor_total_descontos'] = descontos;
+    if (liquido != null) dataToUpdate['valor_total_liquido'] = liquido;
+
+    if (dataToUpdate.length == 1) { // Apenas data_ultima_modificacao
+        _logger.i("Nenhum total para atualizar no carrinho $idCarrinho, apenas data de modificação.");
+        // Você pode optar por não fazer o update se apenas a data for mudar, ou fazer mesmo assim.
+    }
+
     try {
-      int resultado = await db.transaction((txn) async {
-        return await txn.delete(
-          tableName,
-          where: 'codcli = ? AND finalizado = 0',
-          whereArgs: [codcli],
+        int count = await db.update(
+            DatabaseHelper.tableCarrinhos,
+            dataToUpdate,
+            where: 'id = ?',
+            whereArgs: [idCarrinho],
         );
-      });
-      return resultado > 0;
-    } catch (e) {
-      print("\u274c Erro ao limpar carrinho: $e");
+        if (count > 0) {
+            _logger.i("Totais do carrinho $idCarrinho atualizados.");
+            return true;
+        }
+        _logger.w("Nenhum total de carrinho atualizado. ID: $idCarrinho");
+        return false;
+    } catch (e, s) {
+        _logger.e("Erro ao atualizar totais do carrinho $idCarrinho", error: e, stackTrace: s);
+        return false;
+    }
+  }
+
+
+  // Deleta um carrinho e seus itens (devido ao ON DELETE CASCADE)
+  Future<bool> deletarCarrinho(int idCarrinho) async {
+    final db = await _database;
+    try {
+      int count = await db.delete(
+        DatabaseHelper.tableCarrinhos,
+        where: 'id = ?',
+        whereArgs: [idCarrinho],
+      );
+      if (count > 0) {
+        _logger.i("Carrinho $idCarrinho deletado (e seus itens via cascade).");
+        return true;
+      }
+      _logger.w("Nenhum carrinho deletado. ID: $idCarrinho");
+      return false;
+    } catch (e, s) {
+      _logger.e("Erro ao deletar carrinho $idCarrinho", error: e, stackTrace: s);
       return false;
     }
   }
 
-  Future<void> printCarrinho() async {
-    final db = await database;
-    final List<Map<String, dynamic>> items = await db.query('carrinho_itens');
-    print('\u2705 Itens no carrinho: $items');
+  // Cole estes dois métodos DENTRO da sua classe CarrinhosDao
+
+  /// Busca um carrinho aberto para um cliente, sem criar um novo.
+  /// Retorna o CarrinhoModel se encontrado e aberto, ou null caso contrário.
+  Future<CarrinhoModel?> getCarrinhoAberto(int codcli) async {
+    // Garante acesso ao banco de dados (adapte se seu BaseDao for diferente)
+    final db = await DatabaseHelper.instance.database; 
+    // Usa instância do Logger (adicione 'final Logger _logger = Logger();' no seu DAO)
+    final Logger _logger = Logger(); 
+
+    List<Map<String, dynamic>> existentes = await db.query(
+      DatabaseHelper.tableCarrinhos, // Use a constante de nome de tabela
+      where: 'codcli = ? AND status = ?',
+      whereArgs: [codcli, 'aberto'], // Busca apenas os abertos
+      limit: 1,
+    );
+
+    if (existentes.isNotEmpty) {
+      _logger.i("Carrinho aberto encontrado para cliente $codcli via getCarrinhoAberto.");
+      return CarrinhoModel.fromJson(existentes.first);
+    }
+    _logger.i("Nenhum carrinho aberto encontrado para cliente $codcli via getCarrinhoAberto.");
+    return null; // Retorna null explicitamente se não achar
   }
+
+  /// Atualiza apenas a data de modificação de um carrinho existente.
+  Future<bool> atualizarDataModificacao(int idCarrinho) async {
+    // Garante acesso ao banco de dados
+    final db = await DatabaseHelper.instance.database; 
+    // Usa instância do Logger
+    final Logger _logger = Logger(); 
+
+    try {
+      int count = await db.update(
+        DatabaseHelper.tableCarrinhos, // Use a constante de nome de tabela
+        {'data_ultima_modificacao': DateTime.now().toIso8601String()}, // Apenas atualiza a data/hora
+        where: 'id = ?',
+        whereArgs: [idCarrinho],
+      );
+      if (count > 0) {
+        _logger.i("Data de modificação do carrinho $idCarrinho atualizada.");
+        return true;
+      }
+      _logger.w("Nenhuma data de modificação de carrinho atualizada (update retornou 0). ID: $idCarrinho");
+      return false; // Retorna false se nenhum registro foi atualizado
+    } catch (e, s) {
+      _logger.e("Erro ao atualizar data_ultima_modificacao do carrinho $idCarrinho", error: e, stackTrace: s);
+      return false; // Retorna false em caso de erro
+    }
+  }
+
+
+// Não se esqueça de importar o Logger e o DatabaseHelper no arquivo do CarrinhosDao
+// import 'package:logger/logger.dart';
+// import 'package:flutter_docig_venda/helpers/database_helper.dart';
+// import 'package:flutter_docig_venda/models/carrinho_model.dart';
+
+// DENTRO DA CLASSE CarrinhosDao
+// (lib/services/dao/carrinhos_dao.dart)
+
+Future<List<int>> getCodigosClientesComCarrinhoAberto() async {
+  final db = await DatabaseHelper.instance.database;
+  final Logger logger = Logger(); // Adicione uma instância do logger se não tiver
+  
+  final List<Map<String, dynamic>> maps = await db.query(
+    DatabaseHelper.tableCarrinhos,
+    distinct: true,
+    columns: ['codcli'],
+    where: 'status = ?',
+    whereArgs: ['aberto'],
+  );
+  
+  List<int> codigos = maps.map((map) => map['codcli'] as int).toList();
+  logger.d("Códigos de clientes com carrinho aberto (DAO): $codigos");
+  return codigos;
+}
+
+
+
 }
