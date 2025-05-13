@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart'; // Adicionar esta importação
 import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
 import 'package:flutter_docig_venda/widgets/botao.dart';
 import 'package:flutter_docig_venda/screens/produtoScreen.dart';
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/screens/dupricata.dart';
+import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Adicionar esta importação
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:developer' as developer;
@@ -445,10 +447,20 @@ class Infocliente extends StatelessWidget {
     }
   }
 
+  // AQUI ESTÁ A SOLUÇÃO: Modificação do método _handleProdutosButtonPress
   void _handleProdutosButtonPress(BuildContext context) async {
     await carrinhoDao.getCarrinhoAberto(cliente.codcli);
 
     if (!context.mounted) return;
+    
+    // SOLUÇÃO: Limpar o carrinho ANTES de navegar para ProdutoScreen
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    carrinhoProvider.limpar(); // <-- ESTA É A LINHA CRUCIAL!
+    
+    // Log para debugging (opcional)
+    developer.log("CarrinhoProvider limpo ANTES de navegar para ProdutoScreen do cliente ${cliente.codcli}",
+      name: 'Infocliente');
+    
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -457,8 +469,15 @@ class Infocliente extends StatelessWidget {
     );
   }
 
-  // Novo método para lidar com o botão de adicionar produto individual
+  // Também devemos aplicar a mesma solução no método de adicionar produto individual
   void _handleAdicionarProdutoPress(BuildContext context) {
+    // SOLUÇÃO: Limpar o carrinho ANTES de qualquer navegação que lide com produtos
+    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    carrinhoProvider.limpar();
+    
+    developer.log("CarrinhoProvider limpo ANTES de adicionar produto individual para cliente ${cliente.codcli}",
+      name: 'Infocliente');
+    
     // Since we don't have access to the full codebase, we'll just show a placeholder message
     // Normally we would navigate to the CodigoScreen
     ScaffoldMessenger.of(context).showSnackBar(

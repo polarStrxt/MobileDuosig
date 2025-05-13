@@ -1,4 +1,5 @@
 // lib/models/produto_model.dart
+import 'package:flutter/foundation.dart'; // Para kDebugMode, se for usar prints condicionais
 
 class ProdutoModel {
   final int? codprd;
@@ -42,25 +43,53 @@ class ProdutoModel {
   });
 
   factory ProdutoModel.fromJson(Map<String, dynamic> map) {
+    // Helper para converter num (int ou double) para double de forma segura
+    double _parseDouble(dynamic value, {double defaultValue = 0.0}) {
+      if (value is double) {
+        return value;
+      } else if (value is int) {
+        return value.toDouble();
+      } else if (value is String) {
+        return double.tryParse(value) ?? defaultValue;
+      }
+      return defaultValue;
+    }
+
+    // Helper para converter num (int ou double) para int de forma segura
+     int _parseInt(dynamic value, {int defaultValue = 0}) {
+      if (value is int) {
+        return value;
+      } else if (value is double) {
+        return value.toInt();
+      } else if (value is String) {
+        return int.tryParse(value) ?? defaultValue;
+      }
+      return defaultValue;
+    }
+
+
+    // Linha 53 que você mencionou provavelmente está entre estas conversões para double:
     return ProdutoModel(
-      codprd: map['codprd'] as int?,
-      staati: map['staati'] as String,
-      dcrprd: map['dcrprd'] as String,
-      qtdmulvda: map['qtdmulvda'] as int,
-      nommrc: map['nommrc'] as String,
-      vlrbasvda: map['vlrbasvda'] as double,
-      qtdetq: map['qtdetq'] as int?,
-      vlrpmcprd: map['vlrpmcprd'] as double,
+      codprd: map['codprd'] != null ? _parseInt(map['codprd']) : null,
+      staati: map['staati'] as String? ?? 'A', // Default 'A' se nulo
+      dcrprd: map['dcrprd'] as String? ?? '',
+      qtdmulvda: _parseInt(map['qtdmulvda'], defaultValue: 1), // Default 1 se nulo/inválido
+      nommrc: map['nommrc'] as String? ?? '',
+      // ----- ATENÇÃO A ESTAS CONVERSÕES -----
+      vlrbasvda: _parseDouble(map['vlrbasvda']),
+      qtdetq: map['qtdetq'] != null ? _parseInt(map['qtdetq']) : null,
+      vlrpmcprd: _parseDouble(map['vlrpmcprd']),
       dtaini: map['dtaini'] as String?,
       dtafin: map['dtafin'] as String?,
-      vlrtab1: map['vlrtab1'] as double,
-      vlrtab2: map['vlrtab2'] as double,
-      peracrdsc1: map['peracrdsc1'] as double,
-      peracrdsc2: map['peracrdsc2'] as double,
-      codundprd: map['codundprd'] as String,
-      vol: map['vol'] as int,
-      qtdvol: map['qtdvol'] as int,
-      perdscmxm: map['perdscmxm'] as double,
+      vlrtab1: _parseDouble(map['vlrtab1']),
+      vlrtab2: _parseDouble(map['vlrtab2']),
+      peracrdsc1: _parseDouble(map['peracrdsc1']),
+      peracrdsc2: _parseDouble(map['peracrdsc2']),
+      // --------------------------------------
+      codundprd: map['codundprd'] as String? ?? 'UN',
+      vol: _parseInt(map['vol'], defaultValue: 1),
+      qtdvol: _parseInt(map['qtdvol'], defaultValue: 1),
+      perdscmxm: _parseDouble(map['perdscmxm']),
     );
   }
 
@@ -93,22 +122,22 @@ class ProdutoModel {
       other is ProdutoModel &&
           runtimeType == other.runtimeType &&
           codprd == other.codprd &&
-          codprd != null;
+          // Considerar apenas codprd para igualdade se ele for único e não nulo
+          // Se codprd puder ser nulo, a lógica de igualdade pode precisar ser mais complexa
+          // ou baseada em mais campos se necessário.
+          codprd != null; 
 
   @override
   int get hashCode => codprd.hashCode;
 
-  // V V V ADICIONE OU VERIFIQUE ESTE MÉTODO V V V
-  /// Retorna o preço do produto baseado na tabela de preço do cliente.
-  ///
-  /// [clienteTabela] deve ser 1 para `vlrtab1` ou 2 (ou qualquer outro valor) para `vlrtab2`.
   double getPrecoParaTabela(int clienteTabela) {
+    // Adiciona verificação para campos de preço nulos, se eles puderem ser
+    // No seu modelo, eles são 'double', então não devem ser nulos se o objeto foi criado corretamente.
+    // Mas se o JSON da API puder omiti-los, o _parseDouble já trata com defaultValue.
     if (clienteTabela == 1) {
       return vlrtab1;
     } else {
-      // Assume vlrtab2 para qualquer outro valor de clienteTabela (ou adicione mais lógica se necessário)
       return vlrtab2;
     }
   }
-  // ^ ^ ^ ADICIONE OU VERIFIQUE ESTE MÉTODO ^ ^ ^
 }

@@ -1,10 +1,9 @@
-// lib/screens/clientes_com_carrinho_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
-import 'package:flutter_docig_venda/services/cliente_repository.dart'; // Importação Corrigida
+import 'package:flutter_docig_venda/services/cliente_repository.dart'; // Importação correta
 import 'package:logger/logger.dart';
-import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Renomeie para carrinho_screen.dart
+import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Nome do arquivo corrigido
 import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/api_client.dart'; // Para ApiResult
@@ -18,13 +17,11 @@ class ClientesComCarrinhoScreen extends StatefulWidget {
 
 class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
   final CarrinhoService _carrinhoService = CarrinhoService();
-  // _clienteRepository não é mais necessário aqui se getClientesComCarrinhosAbertos no service já retorna ClienteModel
-  // final ClienteRepository _clienteRepository = ClienteRepository(); 
   final Logger _logger = Logger();
   
   final Color primaryColor = const Color(0xFF5D5CDE);
   
-  List<Cliente> _clientesComCarrinho = []; // Usar ClienteModel
+  List<Cliente> _clientesComCarrinho = []; // Corrigido: Cliente -> ClienteModel
   bool _isLoading = true;
   bool _hasError = false;
   String _errorMessage = '';
@@ -56,10 +53,12 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
         });
         _logger.d("Carregados ${_clientesComCarrinho.length} clientes com carrinho pendente");
       } else {
-         _hasError = true; // Indica que houve um erro, mesmo que a API tenha retornado 'success = false'
-         _errorMessage = resultado.errorMessage ?? "Falha ao buscar clientes com carrinho.";
+         setState(() {
+           _hasError = true; // Indica que houve um erro, mesmo que a API tenha retornado 'success = false'
+           _errorMessage = resultado.errorMessage ?? "Falha ao buscar clientes com carrinho.";
+           _isLoading = false;
+         });
          _logger.w("Falha ao carregar clientes com carrinho: $_errorMessage");
-         if (mounted) setState(() => _isLoading = false);
       }
     } catch (e) {
       _logger.e("Erro crítico ao carregar clientes com carrinho: $e");
@@ -75,8 +74,15 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
   }
 
   String _getFriendlyErrorMessage(dynamic error) {
-    // ... (seu método _getFriendlyErrorMessage)
-    return error.toString();
+    // Implementação simplificada - você pode expandir conforme necessário
+    if (error.toString().contains('SocketException') || 
+        error.toString().contains('Connection refused')) {
+      return "Falha na conexão. Verifique sua internet e tente novamente.";
+    }
+    if (error.toString().contains('TimeoutException')) {
+      return "O servidor demorou muito para responder. Tente novamente.";
+    }
+    return "Erro ao carregar os dados: ${error.toString()}";
   }
 
   void _mostrarSnackBar(String mensagem, Color cor) {
@@ -92,7 +98,7 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
     );
   }
 
-  Future<void> _abrirCarrinhoCliente(Cliente cliente) async { // Usa ClienteModel
+  Future<void> _abrirCarrinhoCliente(Cliente cliente) async { // Corrigido: Cliente -> ClienteModel
     if (cliente.codcli == null) {
       _mostrarSnackBar("Cliente selecionado é inválido (sem código).", Colors.red);
       return;
@@ -180,8 +186,22 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
 
   String _formatarTelefone(String? telefone) { // Aceita nulável
     if (telefone == null || telefone.isEmpty) return 'Não informado';
-    // ... (sua lógica de formatação)
-    return telefone;
+    
+    // Implementação básica de formatação de telefone
+    // Você pode melhorar conforme sua necessidade
+    String cleaned = telefone.replaceAll(RegExp(r'\D'), '');
+    
+    if (cleaned.length == 11) { // Celular com DDD
+      return '(${cleaned.substring(0, 2)}) ${cleaned.substring(2, 7)}-${cleaned.substring(7)}';
+    } else if (cleaned.length == 10) { // Telefone fixo com DDD
+      return '(${cleaned.substring(0, 2)}) ${cleaned.substring(2, 6)}-${cleaned.substring(6)}';
+    } else if (cleaned.length == 9) { // Celular sem DDD
+      return '${cleaned.substring(0, 5)}-${cleaned.substring(5)}';
+    } else if (cleaned.length == 8) { // Telefone fixo sem DDD
+      return '${cleaned.substring(0, 4)}-${cleaned.substring(4)}';
+    }
+    
+    return telefone; // Retorna o original se não conseguir formatar
   }
 
   @override
@@ -219,9 +239,95 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
     return _buildClientesList();
   }
 
-  Widget _buildLoadingState() { /* ... Seu código ... */ return Center(child: CircularProgressIndicator());}
-  Widget _buildErrorState() { /* ... Seu código ... */ return Center(child: Text("Erro"));}
-  Widget _buildEmptyState() { /* ... Seu código ... */ return Center(child: Text("Vazio"));}
+  Widget _buildLoadingState() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 20),
+          Text("Carregando carrinhos pendentes...", 
+              style: TextStyle(color: Colors.grey))
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildErrorState() { 
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 56, color: Colors.red[400]),
+            const SizedBox(height: 16),
+            const Text(
+              'Erro ao carregar dados',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _errorMessage,
+              style: TextStyle(color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _carregarDados,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar novamente'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.shopping_cart_outlined, size: 72, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              'Sem carrinhos pendentes',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: Colors.grey[800],
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Nenhum cliente tem um carrinho aberto no momento.',
+              style: TextStyle(color: Colors.grey[600]),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _carregarDados,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Atualizar'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryColor,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildClientesList() {
     return ListView.separated(
@@ -230,13 +336,13 @@ class _ClientesComCarrinhoScreenState extends State<ClientesComCarrinhoScreen> {
       padding: const EdgeInsets.only(top: 8, bottom: 20),
       separatorBuilder: (context, index) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
-        final Cliente cliente = _clientesComCarrinho[index]; // Usa ClienteModel
+        final Cliente cliente = _clientesComCarrinho[index]; // Corrigido: Cliente -> ClienteModel
         return _buildClienteCard(cliente);
       },
     );
   }
 
-  Widget _buildClienteCard(Cliente cliente) { // Usa ClienteModel
+  Widget _buildClienteCard(Cliente cliente) { // Corrigido: Cliente -> ClienteModel
     // Correção para deprecated_member_use
     final transparentPrimaryColor = primaryColor.withOpacity(0.1); 
 

@@ -201,18 +201,34 @@ class _ProdutoScreenState extends State<ProdutoScreen> {
         _isLoadingProdutos = true;
         _errorMessageProdutos = null;
       });
+    } else {
+      return; 
     }
+
     try {
+      _logger.i("ProdutoScreen: Iniciando _carregarProdutosDoDb()...");
       List<ProdutoModel> lista = await _produtoDao.getAll((json) => ProdutoModel.fromJson(json));
+      
+      // ----- LOG DETALHADO -----
+      _logger.i("ProdutoScreen: Produtos carregados do _produtoDao.getAll(): ${lista.length} itens.");
+      if (lista.isEmpty) {
+        _logger.w("ProdutoScreen: A lista retornada pelo DAO está VAZIA.");
+      } else {
+        for (var p in lista) {
+          _logger.d("ProdutoScreen: DAO retornou -> ID: ${p.codprd}, Nome: ${p.dcrprd}, Preço T1: ${p.vlrtab1}");
+        }
+      }
+      // -------------------------
+
       if (mounted) {
         setState(() {
           _produtos = lista;
-          _produtosFiltrados = lista;
+          _produtosFiltrados = lista; // Inicializa filtrados com todos os produtos
           _isLoadingProdutos = false;
         });
       }
-    } catch (e) {
-      _logger.e("Erro ao buscar produtos: $e");
+    } catch (e, s) { // Adiciona stacktrace ao log
+      _logger.e("ProdutoScreen: Erro em _carregarProdutosDoDb()", error: e, stackTrace: s);
       if (mounted) {
         setState(() {
           _isLoadingProdutos = false;

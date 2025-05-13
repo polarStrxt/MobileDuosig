@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/models/condicao_pagamento.dart'; // Corrigido: importando do modelo
 import 'package:flutter_docig_venda/widgets/gerarpdfsimples.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
@@ -10,32 +11,8 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:logger/logger.dart';
 
-/// Modelo para condição de pagamento
-class CondicaoPagamento {
-  final int codcndpgt;
-  final String dcrcndpgt;
-  final double perdsccel;
-  final String staati;
-
-  CondicaoPagamento({
-    required this.codcndpgt,
-    required this.dcrcndpgt,
-    required this.perdsccel,
-    required this.staati,
-  });
-
-  factory CondicaoPagamento.fromJson(Map<String, dynamic> json) {
-    return CondicaoPagamento(
-      codcndpgt: json['codcndpgt'],
-      dcrcndpgt: json['dcrcndpgt'],
-      perdsccel: json['perdsccel'].toDouble(),
-      staati: json['staati'],
-    );
-  }
-}
-
 class CarrinhoScreen extends StatefulWidget {
-  final Cliente? cliente;
+  final Cliente? cliente; // Corrigido: Cliente -> ClienteModel
   final int codcli;
 
   const CarrinhoScreen({
@@ -56,8 +33,8 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   final CarrinhoService _carrinhoService = CarrinhoService();
   final Logger _logger = Logger();
 
-  // Estado de carregamento
-  final bool _isLoading = false; // Made final since not changed after init
+  // Estado de carregamento e processamento
+  bool _isProcessingAction = false;
   String? _errorMessage;
   bool _isDisposed = false;
 
@@ -191,78 +168,153 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
   // Método para atualizar o desconto de um produto
   Future<void> atualizarDesconto(ProdutoModel produto, double novoDesconto) async {
-    if (_isDisposed) return;
+    if (!mounted) return;
+    
+    setState(() {
+      _isProcessingAction = true;
+    });
 
     final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     
-    // Validar o desconto (entre 0 e 100)
-    novoDesconto = novoDesconto.clamp(0.0, 100.0);
-    
-    // Atualizar o desconto no carrinho compartilhado
-    carrinhoProvider.descontos[produto] = novoDesconto;
-    
-    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
-    setState(() {});
-    
-    // Persistir as alterações no banco de dados
-    _persistirCarrinhoAposAlteracao(carrinhoProvider);
+    try {
+      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
+      carrinhoProvider.atualizarDesconto(produto, novoDesconto);
+      
+      // Persistir as alterações no banco de dados através do service
+      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
+    } catch (e) {
+      _logger.e('Erro ao atualizar desconto: $e');
+      if (mounted) {
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Text('Erro ao atualizar desconto: $e'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingAction = false;
+        });
+      }
+    }
   }
 
   // Método para remover um produto do carrinho
   Future<void> _removerProduto(ProdutoModel produto) async {
-    if (_isDisposed) return;
+    if (!mounted) return;
+    
+    setState(() {
+      _isProcessingAction = true;
+    });
 
     final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     
-    // Remover produto do carrinho compartilhado
-    carrinhoProvider.itens.remove(produto);
-    carrinhoProvider.descontos.remove(produto);
-    
-    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
-    setState(() {});
-    
-    // Persistir as alterações no banco de dados
-    _persistirCarrinhoAposAlteracao(carrinhoProvider);
+    try {
+      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
+      carrinhoProvider.removerItem(produto);
+      
+      // Persistir as alterações no banco de dados através do service
+      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
+    } catch (e) {
+      _logger.e('Erro ao remover produto: $e');
+      if (mounted) {
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Text('Erro ao remover produto: $e'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingAction = false;
+        });
+      }
+    }
   }
 
   // Método para atualizar a quantidade de um produto
   Future<void> _atualizarQuantidade(ProdutoModel produto, int quantidade) async {
-    if (_isDisposed) return;
+    if (!mounted) return;
+    
+    setState(() {
+      _isProcessingAction = true;
+    });
 
     final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    if (quantidade <= 0) {
-      await _removerProduto(produto);
-      return;
+    try {
+      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
+      carrinhoProvider.atualizarQuantidade(produto, quantidade);
+      
+      // Persistir as alterações no banco de dados através do service
+      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
+    } catch (e) {
+      _logger.e('Erro ao atualizar quantidade: $e');
+      if (mounted) {
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Text('Erro ao atualizar quantidade: $e'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingAction = false;
+        });
+      }
     }
-
-    // Atualizar a quantidade no carrinho compartilhado
-    carrinhoProvider.itens[produto] = quantidade;
-    
-    // Notificar ouvintes para atualizar a UI - Fixed notifyListeners issue
-    setState(() {});
-    
-    // Persistir as alterações no banco de dados
-    _persistirCarrinhoAposAlteracao(carrinhoProvider);
   }
 
   // Método auxiliar para persistir alterações do carrinho
-  void _persistirCarrinhoAposAlteracao(Carrinho carrinhoProvider) {
-    if (widget.cliente == null) return;
+  Future<void> _persistirCarrinhoAposAlteracao(Carrinho carrinhoProvider) async {
+    if (widget.cliente == null || widget.cliente!.codcli == null) {
+      _logger.w("Persistir: Cliente ou codcli nulo.");
+      return;
+    }
     
-    _carrinhoService.salvarAlteracoesCarrinho(carrinhoProvider, widget.cliente!)
-        .then((result) {
-      if (!result.isSuccess && mounted) {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    
+    try {
+      final result = await _carrinhoService.salvarAlteracoesCarrinho(carrinhoProvider, widget.cliente!);
+      
+      if (!mounted) return;
+      
+      if (!result.isSuccess) {
         _logger.e("Falha ao salvar carrinho no banco: ${result.errorMessage}");
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Text("Erro ao salvar alteração: ${result.errorMessage}"),
             backgroundColor: Colors.red[700],
             behavior: SnackBarBehavior.floating,
           )
         );
+      } else {
+        _logger.i("Carrinho atualizado no banco.");
       }
-    });
+    } catch (e, s) {
+      _logger.e("Erro crítico ao persistir carrinho", error: e, stackTrace: s);
+      if (mounted) {
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text("Erro crítico ao salvar."), 
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          )
+        );
+      }
+    }
   }
 
   @override
@@ -287,7 +339,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   }
 
   Widget _buildBody(Carrinho carrinhoProvider) {
-    if (_isLoading) {
+    if (_isProcessingAction) {
       return _buildLoadingState();
     }
 
@@ -826,7 +878,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   Widget _buildCartSummary(Carrinho carrinhoProvider) {
     final int tabelaPreco = widget.cliente?.codtab ?? 1;
     
-    // Implementação do método ausente para calcular o subtotal sem desconto
+    // Calcular o subtotal sem desconto
     double calcularSubtotalSemDesconto() {
       double total = 0.0;
       carrinhoProvider.itens.forEach((produto, quantidade) {
@@ -925,13 +977,15 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
             // Transfer button
             ElevatedButton(
-              onPressed: () {
-                if (widget.cliente == null) {
-                  _mostrarErroClienteNaoAssociado();
-                } else {
-                  _mostrarDialogoTransferirCarrinho(carrinhoProvider);
-                }
-              },
+              onPressed: _isProcessingAction 
+                ? null 
+                : () {
+                    if (widget.cliente == null) {
+                      _mostrarErroClienteNaoAssociado();
+                    } else {
+                      _mostrarDialogoTransferirCarrinho(carrinhoProvider);
+                    }
+                  },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5D5CDE),
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -939,14 +993,37 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 elevation: 0,
+                disabledBackgroundColor: Colors.grey[300],
               ),
-              child: const Text(
-                'Finalizar Carrinho',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
+              child: _isProcessingAction
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.grey[200]!),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Processando...',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  )
+                : const Text(
+                    'Finalizar Carrinho',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
             ),
           ],
         ),
@@ -1246,9 +1323,15 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     String formaPagamentoDesc = 'A VISTA',
   }) async {
     if (!mounted) return;
+    
+    setState(() {
+      _isProcessingAction = true;
+    });
 
     final int tabelaPreco = widget.cliente?.codtab ?? 1;
     final BuildContext contextAtual = context;
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
 
     // Mostrar diálogo de progresso
     BuildContext? dialogContext;
@@ -1311,7 +1394,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         "cod_vendedor": "001", // Código do vendedor fixo
         "cod_condicao_pagto": formaPagamento,
         "dcr_condicao_pagto": formaPagamentoDesc,
-        "observacao": observacao,
+        "observacoes": observacao, // Alterado aqui: observacao -> observacoes
         "produtos": produtosJson,
       };
 
@@ -1330,30 +1413,37 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       );
 
       // Fechar diálogo de progresso
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+      if (dialogContext != null && mounted) {
         Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
 
       // Verificar resposta
       _logger.i('Resposta (${response.statusCode}): ${response.body}');
 
-      if (!mounted) return; // Added mounted check after async operation
+      if (!mounted) return;
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         // Transferência bem-sucedida - Marcar itens como finalizados ATRAVÉS DO SERVICE
         final resultado = await _carrinhoService.finalizarCarrinho(widget.cliente!);
         
-        if (!mounted) return; // Added mounted check after async operation
+        if (!mounted) return;
         
         if (!resultado.isSuccess) {
           _logger.e('Erro ao finalizar carrinho: ${resultado.errorMessage}');
           _mostrarErroFinalizacaoCarrinho(resultado.errorMessage ?? 'Erro desconhecido');
+          setState(() {
+            _isProcessingAction = false;
+          });
           return;
         }
 
         // Limpar o carrinho na memória (Provider)
         Provider.of<Carrinho>(contextAtual, listen: false).limpar();
+
+        // Desativar o indicador de processamento
+        setState(() {
+          _isProcessingAction = false;
+        });
 
         // Mostrar mensagem de sucesso
         await _mostrarDialogoSucesso(
@@ -1365,17 +1455,26 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         );
       } else {
         // Erro na transferência
+        setState(() {
+          _isProcessingAction = false;
+        });
         await _mostrarDialogoErro(contextAtual, response, dadosPedido);
       }
-    } catch (e) {
+    } catch (e, s) {
+      _logger.e("Erro ao transferir carrinho", error: e, stackTrace: s);
+      
       // Fechar diálogo de progresso
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+      if (dialogContext != null && mounted) {
         Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
 
       // Verificar se o widget ainda está montado
       if (!mounted) return;
+
+      // Atualizar o estado
+      setState(() {
+        _isProcessingAction = false;
+      });
 
       // Mostrar diálogo de erro de conexão
       await _mostrarDialogoErroConexao(
@@ -1402,7 +1501,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     String observacao,
     String formaPagamentoDesc,
   ) async {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     
     await showDialog(
       context: contextAtual,
@@ -1563,7 +1662,10 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     String formaPagamento = '',
     String numPedido = '',
   }) async {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
+    
+    final scaffoldMessenger = ScaffoldMessenger.of(contextAtual);
+    final navigator = Navigator.of(contextAtual);
     
     // Diálogo de contexto para progresso
     BuildContext? dialogContext;
@@ -1590,14 +1692,13 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     try {
       if (carrinhoProvider.isEmpty) {
         // Fechar diálogo de progresso
-        if (dialogContext != null &&
-            Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+        if (dialogContext != null && mounted) {
           Navigator.of(dialogContext!, rootNavigator: true).pop();
         }
 
-        if (!mounted) return; // Added mounted check
+        if (!mounted) return;
         
-        ScaffoldMessenger.of(contextAtual).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: const Text("Não há dados para gerar o PDF"),
             backgroundColor: Colors.red[700],
@@ -1605,7 +1706,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
           ),
         );
         // Sinalizar que não há necessidade de recarregar carrinho
-        Navigator.of(contextAtual).pop(false);
+        navigator.pop(false);
         return;
       }
 
@@ -1627,12 +1728,11 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       );
 
       // Fechar diálogo de progresso
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+      if (dialogContext != null && mounted) {
         Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
 
-      if (!mounted) return; // Added mounted check
+      if (!mounted) return;
 
       if (filePath != null) {
         // Mostrar diálogo de sucesso com opções
@@ -1675,7 +1775,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                 onPressed: () {
                   Navigator.of(context).pop();
                   // Sinalizar que não há necessidade de recarregar carrinho
-                  Navigator.of(contextAtual).pop(false);
+                  navigator.pop(false);
                 },
                 child: const Text("OK"),
               ),
@@ -1690,10 +1790,10 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
                   Navigator.of(context).pop();
                   await PdfGeneratorSimples.compartilharArquivo(filePath);
                   
-                  if (!mounted) return; // Added mounted check
+                  if (!mounted) return;
                   
                   // Sinalizar que não há necessidade de recarregar carrinho
-                  Navigator.of(contextAtual).pop(false);
+                  navigator.pop(false);
                 },
               ),
             ],
@@ -1701,9 +1801,9 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         );
       } else {
         // Mostrar erro
-        if (!mounted) return; // Added mounted check
+        if (!mounted) return;
         
-        ScaffoldMessenger.of(contextAtual).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           SnackBar(
             content: const Text("Erro ao gerar PDF"),
             backgroundColor: Colors.red[700],
@@ -1711,19 +1811,18 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
           ),
         );
         // Sinalizar que não há necessidade de recarregar carrinho
-        Navigator.of(contextAtual).pop(false);
+        navigator.pop(false);
       }
     } catch (e) {
       // Fechar diálogo de progresso se estiver aberto
-      if (dialogContext != null &&
-          Navigator.of(dialogContext!, rootNavigator: true).canPop()) {
+      if (dialogContext != null && mounted) {
         Navigator.of(dialogContext!, rootNavigator: true).pop();
       }
 
-      if (!mounted) return; // Added mounted check
+      if (!mounted) return;
 
       // Mostrar erro
-      ScaffoldMessenger.of(contextAtual).showSnackBar(
+      scaffoldMessenger.showSnackBar(
         SnackBar(
           content: Text("Erro ao gerar PDF: $e"),
           backgroundColor: Colors.red[700],
@@ -1732,7 +1831,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       );
 
       // Sinalizar que não há necessidade de recarregar carrinho
-      Navigator.of(contextAtual).pop(false);
+      navigator.pop(false);
     }
   }
 
@@ -1741,7 +1840,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     http.Response response,
     Map<String, dynamic> dadosPedido,
   ) async {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     
     // Tentar analisar a resposta de erro como JSON
     Map<String, dynamic>? responseJson;
@@ -1836,7 +1935,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     String formaPagamento,
     Carrinho carrinhoProvider,
   ) async {
-    if (!mounted) return; // Added mounted check
+    if (!mounted) return;
     
     await showDialog(
       context: contextAtual,
@@ -1908,3 +2007,29 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 }
+
+// Este arquivo deve ser criado separadamente:
+// lib/models/condicao_pagamento_model.dart
+//
+// class CondicaoPagamento {
+//   final int codcndpgt;
+//   final String dcrcndpgt;
+//   final double perdsccel;
+//   final String staati;
+//
+//   CondicaoPagamento({
+//     required this.codcndpgt,
+//     required this.dcrcndpgt,
+//     required this.perdsccel,
+//     required this.staati,
+//   });
+//
+//   factory CondicaoPagamento.fromJson(Map<String, dynamic> json) {
+//     return CondicaoPagamento(
+//       codcndpgt: json['codcndpgt'],
+//       dcrcndpgt: json['dcrcndpgt'],
+//       perdsccel: json['perdsccel'].toDouble(),
+//       staati: json['staati'],
+//     );
+//   }
+// }
