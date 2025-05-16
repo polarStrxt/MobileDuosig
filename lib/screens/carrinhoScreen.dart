@@ -2,17 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/models/produto_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/models/condicao_pagamento.dart'; // Corrigido: importando do modelo
+import 'package:flutter_docig_venda/models/condicao_pagamento.dart';
 import 'package:flutter_docig_venda/widgets/gerarpdfsimples.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
+import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
+import 'package:flutter_docig_venda/models/carrinho_model.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:logger/logger.dart';
 
 class CarrinhoScreen extends StatefulWidget {
-  final Cliente? cliente; // Corrigido: Cliente -> ClienteModel
+  final Cliente? cliente;
   final int codcli;
 
   const CarrinhoScreen({
@@ -36,18 +38,11 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
   // Estado de carregamento e processamento
   bool _isProcessingAction = false;
   String? _errorMessage;
-  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
     _carregarCondicoesPagamento();
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true;
-    super.dispose();
   }
 
   // Método para carregar as condições de pagamento
@@ -500,7 +495,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withAlpha(13), // Corrigido: withOpacity -> withAlpha
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -511,7 +506,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF5D5CDE).withOpacity(0.1),
+              color: const Color(0xFF5D5CDE).withAlpha(25), // Corrigido: withOpacity -> withAlpha
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
@@ -577,7 +572,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withAlpha(13), // Corrigido: withOpacity -> withAlpha
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -896,7 +891,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withAlpha(20), // Corrigido: withOpacity -> withAlpha
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
@@ -1315,48 +1310,116 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  // Método para transferir o carrinho (enviar POST)
+  // MÉTODO REFATORADO: _transferirCarrinho para implementar o novo fluxo
   Future<void> _transferirCarrinho({
     required Carrinho carrinhoProvider,
     String observacao = '',
     String formaPagamento = '1',
     String formaPagamentoDesc = 'A VISTA',
   }) async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isProcessingAction = true;
-    });
+    if (!mounted || widget.cliente == null || widget.cliente!.codcli == null) {
+      _logger.e("Transferência abortada: widget desmontado ou cliente inválido.");
+      if (mounted) {
+        _mostrarMensagemErroGeral("Cliente inválido. Não é possível transferir.");
+      }
+      return;
+    }
 
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-    final BuildContext contextAtual = context;
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context);
+    setState(() { _isProcessingAction = true; });
 
-    // Mostrar diálogo de progresso
     BuildContext? dialogContext;
+    // Usar um ValueNotifier para mudar o texto do diálogo de progresso
+    ValueNotifier<String> progressoNotifier = ValueNotifier("Processando seu pedido...");
+
     showDialog(
-      context: contextAtual,
+      context: context, // Usar context da tela para o diálogo inicial
       barrierDismissible: false,
-      builder: (context) {
-        dialogContext = context;
-        return const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text("Transferindo dados do carrinho..."),
-            ],
-          ),
+      builder: (buildDialogContext) {
+        dialogContext = buildDialogContext;
+        return ValueListenableBuilder<String>(
+          valueListenable: progressoNotifier,
+          builder: (context, message, child) {
+            return AlertDialog(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 20),
+                  Text(message),
+                ],
+              ),
+            );
+          },
         );
       },
     );
 
-    try {
-      // Preparar a lista de produtos no formato requerido
-      List<Map<String, dynamic>> produtosJson = [];
+    String? filePathDoPdfGerado; // Para armazenar o caminho do PDF
+    String numPedidoFinalGerado = ""; // Para armazenar o número do pedido
 
+    try {
+      // 1. Buscar CarrinhoModel do banco e Salvar Observação Localmente
+      final carrinhosDao = CarrinhosDao(); // Idealmente injetado
+      CarrinhoModel? carrinhoDoBanco = await carrinhosDao.getCarrinhoAberto(widget.cliente!.codcli!);
+
+      if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
+        if (carrinhoDoBanco.observacoes != observacao) {
+          await carrinhosDao.atualizarObservacoesCarrinho(carrinhoDoBanco.id!, observacao);
+          _logger.i("Observação salva no carrinho local ID BD: ${carrinhoDoBanco.id}");
+          // Removidas referências a propriedades e métodos que não existem em Carrinho
+        }
+      } else {
+        _logger.w("Nenhum carrinho local aberto para cliente ${widget.cliente!.codcli}. Observação não será salva localmente.");
+        // Se não há carrinho, a geração do num_pedido usará fallback, e o PDF também refletirá isso.
+      }
+
+      // 2. Gerar Identificadores do Pedido
+      final DateTime agoraParaPedido = DateTime.now();
+      if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
+        String dataCriacaoStr = DateFormat('yyyyMMdd').format(carrinhoDoBanco.dataCriacao);
+        numPedidoFinalGerado = "$dataCriacaoStr-${widget.cliente!.codcli}-${carrinhoDoBanco.id}";
+      } else {
+        String dataFormatadaFallback = DateFormat('yyyyMMdd').format(agoraParaPedido);
+        numPedidoFinalGerado = "$dataFormatadaFallback-${widget.cliente!.codcli.toString().padLeft(3, '0')}-NO_CART_ID";
+      }
+      _logger.i("Número do Pedido Gerado: $numPedidoFinalGerado");
+
+      // 3. TENTAR GERAR O PDF
+      progressoNotifier.value = "Gerando PDF do pedido...";
+      _logger.d("Tentando gerar PDF com numPedido: $numPedidoFinalGerado e observacao: $observacao");
+
+      // Para _gerarPDFComDadosSalvos, vamos passar uma cópia do estado atual do provider
+      // para garantir que o PDF reflita o que o usuário está vendo.
+      final Carrinho carrinhoAtualParaPdf = Carrinho(
+          itens: Map.from(carrinhoProvider.itens),
+          descontos: Map.from(carrinhoProvider.descontos),
+      );
+
+      // O PdfGeneratorSimples precisa do Cliente, e outros dados que já temos.
+      filePathDoPdfGerado = await _gerarPDFComDadosSalvos(
+          carrinhoParaGeracao: carrinhoAtualParaPdf, // Passa o estado atual
+          contextAtual: context, // Passa o context da tela
+          observacao: observacao,
+          cliente: widget.cliente,
+          formaPagamento: formaPagamentoDesc,
+          numPedido: numPedidoFinalGerado
+      );
+
+      if (!mounted) return;
+
+      if (filePathDoPdfGerado == null) {
+        _logger.e("Falha ao gerar PDF. Pedido NÃO será enviado.");
+        if (dialogContext != null) Navigator.of(dialogContext!, rootNavigator: true).pop();
+        setState(() { _isProcessingAction = false; });
+        _mostrarMensagemErroGeral("Falha ao gerar o PDF. O pedido não foi enviado. Por favor, tente novamente.");
+        return;
+      }
+      _logger.i("PDF gerado com sucesso em: $filePathDoPdfGerado");
+
+      // 4. Se PDF OK, TENTAR ENVIAR PARA API
+      progressoNotifier.value = "Enviando pedido para a central...";
+      final int tabelaPreco = widget.cliente!.codtab;
+      List<Map<String, dynamic>> produtosJson = [];
       carrinhoProvider.itens.forEach((produto, quantidade) {
         double preco = produto.getPrecoParaTabela(tabelaPreco);
         double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
@@ -1369,562 +1432,411 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         });
       });
 
-      // Gerar número de pedido no formato YYYYMMDD-CCC
-      final DateTime agora = DateTime.now();
-      final String dataFormatada = "${agora.year}"
-          "${agora.month.toString().padLeft(2, '0')}"
-          "${agora.day.toString().padLeft(2, '0')}";
-      final String codigoCliente =
-          (widget.cliente?.codcli ?? '000').toString().padLeft(3, '0');
-      final String numPedido = "$dataFormatada-$codigoCliente";
-      final String dataHoraCompleta = "${dataFormatada}_"
-          "${agora.hour.toString().padLeft(2, '0')}"
-          "${agora.minute.toString().padLeft(2, '0')}"
-          "${agora.second.toString().padLeft(2, '0')}";
-      final String idPedido = dataHoraCompleta.toUpperCase();
-      final String dataPedido = DateFormat('dd/MM/yyyy').format(DateTime.now());
-
-      // Objeto JSON completo para envio
       final Map<String, dynamic> dadosPedido = {
-        "num_pedido": numPedido,
-        "id": idPedido,
-        "data_pedido": dataPedido,
-        "cod_cliente": widget.cliente?.codcli.toString() ?? "",
+        "num_pedido": numPedidoFinalGerado,
+        "id": numPedidoFinalGerado, // Usando o mesmo para o ID do JSON
+        "data_pedido": DateFormat('dd/MM/yyyy').format(agoraParaPedido),
+        "cod_cliente": widget.cliente!.codcli.toString(),
         "vlr_pedido": carrinhoProvider.calcularValorTotal(tabelaPreco),
-        "cod_vendedor": "001", // Código do vendedor fixo
+        "cod_vendedor": "001",
         "cod_condicao_pagto": formaPagamento,
         "dcr_condicao_pagto": formaPagamentoDesc,
-        "observacoes": observacao, // Alterado aqui: observacao -> observacoes
+        "observacoes": observacao,
         "produtos": produtosJson,
       };
 
-      // Logar o JSON que será enviado
-      _logger.i('Enviando JSON: ${jsonEncode(dadosPedido)}');
-
-      // Enviar requisição POST
-      final Uri uri =
-          Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
+      _logger.i('Enviando JSON para API: ${jsonEncode(dadosPedido)}');
+      final Uri uri = Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
       final response = await http.post(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(dadosPedido),
-      );
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(dadosPedido));
 
-      // Fechar diálogo de progresso
-      if (dialogContext != null && mounted) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      // Verificar resposta
-      _logger.i('Resposta (${response.statusCode}): ${response.body}');
-
+      if (dialogContext != null && mounted) Navigator.of(dialogContext!, rootNavigator: true).pop();
       if (!mounted) return;
 
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Transferência bem-sucedida - Marcar itens como finalizados ATRAVÉS DO SERVICE
-        final resultado = await _carrinhoService.finalizarCarrinho(widget.cliente!);
-        
+      _logger.i('Resposta da API (${response.statusCode}): ${response.body}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) { // SUCESSO NO POST
+        _logger.i("POST para API bem-sucedido. Finalizando carrinho local...");
+        final resultadoFinalizacaoLocal = await _carrinhoService.finalizarCarrinho(widget.cliente!);
         if (!mounted) return;
-        
-        if (!resultado.isSuccess) {
-          _logger.e('Erro ao finalizar carrinho: ${resultado.errorMessage}');
-          _mostrarErroFinalizacaoCarrinho(resultado.errorMessage ?? 'Erro desconhecido');
-          setState(() {
-            _isProcessingAction = false;
-          });
-          return;
+
+        if (resultadoFinalizacaoLocal.isSuccess) {
+          Provider.of<Carrinho>(context, listen: false).limpar();
+          setState(() { _isProcessingAction = false; });
+          await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado);
+        } else {
+          setState(() { _isProcessingAction = false; });
+          _mostrarMensagemErroGeral(
+              "Pedido enviado (Nº: $numPedidoFinalGerado) e PDF gerado, mas erro ao fechar carrinho local. Contate suporte. Carrinho na tela será limpo.");
+          Provider.of<Carrinho>(context, listen: false).limpar();
         }
-
-        // Limpar o carrinho na memória (Provider)
-        Provider.of<Carrinho>(contextAtual, listen: false).limpar();
-
-        // Desativar o indicador de processamento
-        setState(() {
-          _isProcessingAction = false;
-        });
-
-        // Mostrar mensagem de sucesso
-        await _mostrarDialogoSucesso(
-          contextAtual, 
-          numPedido, 
-          carrinhoProvider, 
-          observacao,
-          formaPagamentoDesc,
-        );
-      } else {
-        // Erro na transferência
-        setState(() {
-          _isProcessingAction = false;
-        });
-        await _mostrarDialogoErro(contextAtual, response, dadosPedido);
+      } else { // FALHA NO POST
+        setState(() { _isProcessingAction = false; });
+        await _mostrarDialogoErroEnvioComPdfGerado(context, response, dadosPedido, filePathDoPdfGerado);
       }
+
     } catch (e, s) {
-      _logger.e("Erro ao transferir carrinho", error: e, stackTrace: s);
-      
-      // Fechar diálogo de progresso
-      if (dialogContext != null && mounted) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      // Verificar se o widget ainda está montado
+      _logger.e("Erro crítico em _transferirCarrinho", error: e, stackTrace: s);
+      if (dialogContext != null && mounted) Navigator.of(dialogContext!, rootNavigator: true).pop();
       if (!mounted) return;
-
-      // Atualizar o estado
-      setState(() {
-        _isProcessingAction = false;
-      });
-
-      // Mostrar diálogo de erro de conexão
-      await _mostrarDialogoErroConexao(
-          contextAtual, e, observacao, formaPagamento, carrinhoProvider);
+      setState(() { _isProcessingAction = false; });
+      await _mostrarDialogoErroConexao(context, e, observacao, formaPagamento, carrinhoProvider);
+    } finally {
+       progressoNotifier.dispose(); // Limpa o notifier
     }
   }
 
-  void _mostrarErroFinalizacaoCarrinho(String mensagem) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Erro ao finalizar carrinho no banco: $mensagem'),
-        backgroundColor: Colors.red[700],
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  Future<void> _mostrarDialogoSucesso(
-    BuildContext contextAtual,
-    String numPedido,
-    Carrinho carrinhoProvider,
-    String observacao,
-    String formaPagamentoDesc,
-  ) async {
-    if (!mounted) return;
-    
-    await showDialog(
-      context: contextAtual,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        // Controlador para a animação
-        return StatefulBuilder(
-          builder: (context, setState) {
-            // Inicia a animação quando o diálogo é exibido
-            return AlertDialog(
-              contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24),
-              title: Row(
-                children: [
-                  Text("Sucesso!", style: TextStyle(color: Colors.green[700])),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Animação de sucesso
-                  TweenAnimationBuilder(
-                    duration: const Duration(milliseconds: 800),
-                    tween: Tween<double>(begin: 0.0, end: 1.0),
-                    curve: Curves.elasticOut,
-                    builder: (context, double value, child) {
-                      return Container(
-                        height: 120,
-                        width: 120,
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.green[50],
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.green.withOpacity(0.2),
-                              blurRadius: 12 * value,
-                              spreadRadius: 4 * value,
-                            ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Transform.scale(
-                            scale: value,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Container(
-                                  width: 80,
-                                  height: 80,
-                                  decoration: BoxDecoration(
-                                    color: Colors.green[400],
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const Icon(
-                                  Icons.check,
-                                  color: Colors.white,
-                                  size: 50,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                  // Texto com fade-in
-                  TweenAnimationBuilder(
-                    duration: const Duration(milliseconds: 800),
-                    tween: Tween<double>(begin: 0.0, end: 1.0),
-                    curve: Curves.easeInOut,
-                    builder: (context, double value, child) {
-                      return Opacity(
-                        opacity: value,
-                        child: child,
-                      );
-                    },
-                    child: Column(
-                      children: [
-                        const Text(
-                          "Carrinho transferido com sucesso!",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: Colors.green[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.green[100]!),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.numbers, size: 18, color: Colors.green[700]),
-                              const SizedBox(width: 8),
-                              Text(
-                                "Pedido: $numPedido",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.green[800],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    // Sinalizar que não há necessidade de recarregar carrinho
-                    Navigator.of(contextAtual).pop(false);
-                  },
-                  child: const Text("OK"),
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.picture_as_pdf, size: 18),
-                  label: const Text("Gerar PDF"),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF5D5CDE),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _gerarPDFComDadosSalvos(
-                      carrinhoProvider: carrinhoProvider,
-                      observacao: observacao,
-                      contextAtual: contextAtual,
-                      numPedido: numPedido,
-                      formaPagamento: formaPagamentoDesc,
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  // Método para gerar PDF com dados do Provider
-  Future<void> _gerarPDFComDadosSalvos({
-    required Carrinho carrinhoProvider,
-    required BuildContext contextAtual,
-    String observacao = '',
-    String nomeVendedor = '',
-    String nomeClienteResponsavel = '',
-    String emailCliente = '',
+  // MÉTODO REFATORADO: _gerarPDFComDadosSalvos para retornar o caminho do arquivo
+  Future<String?> _gerarPDFComDadosSalvos({ // Retorna o caminho do arquivo ou null
+    required Carrinho carrinhoParaGeracao, // Recebe uma instância de Carrinho com os dados
+    required BuildContext contextAtual,    // Contexto da tela
+    required String observacao,            // Agora é parâmetro obrigatório 
+    Cliente? cliente,
     String formaPagamento = '',
     String numPedido = '',
+    String nomeVendedor = 'Vendedor Padrão',
+    String? nomeClienteResponsavel,
+    String? emailCliente,
   }) async {
-    if (!mounted) return;
-    
-    final scaffoldMessenger = ScaffoldMessenger.of(contextAtual);
-    final navigator = Navigator.of(contextAtual);
-    
-    // Diálogo de contexto para progresso
-    BuildContext? dialogContext;
+    if (!mounted) return null;
 
-    // Mostrar progresso
+    // Usar um ValueNotifier para o diálogo de progresso interno desta função
+    ValueNotifier<String> pdfProgressoNotifier = ValueNotifier("Gerando PDF...");
+    BuildContext? pdfDialogContext;
+
     showDialog(
-      context: contextAtual,
+      context: contextAtual, // Usa o context da tela
       barrierDismissible: false,
-      builder: (context) {
-        dialogContext = context;
-        return const AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 20),
-              Text("Gerando PDF..."),
-            ],
-          ),
+      builder: (buildDialogCtx) {
+        pdfDialogContext = buildDialogCtx;
+        return ValueListenableBuilder<String>(
+            valueListenable: pdfProgressoNotifier,
+            builder: (ctx, message, _) => AlertDialog(
+                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const CircularProgressIndicator(), const SizedBox(height: 20), Text(message)
+                ]),
+            ),
         );
       },
     );
 
     try {
-      if (carrinhoProvider.isEmpty) {
-        // Fechar diálogo de progresso
-        if (dialogContext != null && mounted) {
-          Navigator.of(dialogContext!, rootNavigator: true).pop();
-        }
-
-        if (!mounted) return;
-        
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: const Text("Não há dados para gerar o PDF"),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        // Sinalizar que não há necessidade de recarregar carrinho
-        navigator.pop(false);
-        return;
+      if (carrinhoParaGeracao.isEmpty) {
+        _logger.w("PDF: Carrinho para geração está vazio.");
+        if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
+        _mostrarMensagemErroGeral("Não há itens no carrinho para gerar o PDF.");
+        return null;
       }
 
-      // Converter os dados do provider para o formato esperado pelo gerador de PDF
-      final Map<ProdutoModel, int> produtosSalvos = Map.from(carrinhoProvider.itens);
-      final Map<ProdutoModel, double> descontosSalvos = Map.from(carrinhoProvider.descontos);
-
-      // Gerar PDF com os mapas do provider
+      // Usa os dados de carrinhoParaGeracao
       final filePath = await PdfGeneratorSimples.gerarPdfSimples(
-        produtosSalvos,
-        descontosSalvos,
-        widget.cliente,
+        Map.from(carrinhoParaGeracao.itens),       // Passa cópias para segurança
+        Map.from(carrinhoParaGeracao.descontos),
+        cliente ?? widget.cliente,
         observacao,
         nomeVendedor,
-        nomeClienteResponsavel,
-        emailCliente,
+        nomeClienteResponsavel ?? cliente?.nomcli ?? widget.cliente?.nomcli ?? "Consumidor",
+        emailCliente ?? cliente?.emailcli ?? widget.cliente?.emailcli ?? "",
         formaPagamento,
         numPedido,
       );
 
-      // Fechar diálogo de progresso
-      if (dialogContext != null && mounted) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      if (!mounted) return;
+      if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
 
       if (filePath != null) {
-        // Mostrar diálogo de sucesso com opções
-        await showDialog(
-          context: contextAtual,
-          builder: (BuildContext context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.picture_as_pdf, color: Colors.green[600], size: 24),
-                const SizedBox(width: 8),
-                const Text("PDF Gerado", style: TextStyle(fontSize: 18)),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("O arquivo foi salvo com sucesso!"),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    filePath,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[700],
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  // Sinalizar que não há necessidade de recarregar carrinho
-                  navigator.pop(false);
-                },
-                child: const Text("OK"),
-              ),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.share, size: 18),
-                label: const Text("Compartilhar"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5D5CDE),
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await PdfGeneratorSimples.compartilharArquivo(filePath);
-                  
-                  if (!mounted) return;
-                  
-                  // Sinalizar que não há necessidade de recarregar carrinho
-                  navigator.pop(false);
-                },
-              ),
-            ],
-          ),
-        );
+        _logger.i("PDF gerado com sucesso em $filePath");
+        // Não mostre diálogo de sucesso aqui, apenas retorne o path
+        // O _transferirCarrinho cuidará do feedback ao usuário.
+        return filePath;
       } else {
-        // Mostrar erro
-        if (!mounted) return;
-        
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: const Text("Erro ao gerar PDF"),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        // Sinalizar que não há necessidade de recarregar carrinho
-        navigator.pop(false);
+        _logger.e("PDF: PdfGeneratorSimples.gerarPdfSimples retornou nulo.");
+        if(mounted) _mostrarMensagemErroGeral("Erro desconhecido ao gerar PDF.");
+        return null;
       }
-    } catch (e) {
-      // Fechar diálogo de progresso se estiver aberto
-      if (dialogContext != null && mounted) {
-        Navigator.of(dialogContext!, rootNavigator: true).pop();
-      }
-
-      if (!mounted) return;
-
-      // Mostrar erro
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          content: Text("Erro ao gerar PDF: $e"),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      // Sinalizar que não há necessidade de recarregar carrinho
-      navigator.pop(false);
+    } catch (e, s) {
+      _logger.e("PDF: Erro crítico em _gerarPDFComDadosSalvos", error: e, stackTrace: s);
+      if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
+      if(mounted) _mostrarMensagemErroGeral("Erro inesperado ao gerar PDF: $e");
+      return null;
+    } finally {
+      pdfProgressoNotifier.dispose();
     }
   }
 
-  Future<void> _mostrarDialogoErro(
-    BuildContext contextAtual,
-    http.Response response,
+  // Método para mostrar mensagem de erro geral
+  void _mostrarMensagemErroGeral(String mensagem) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  // NOVO DIÁLOGO: Para mostrar pedido enviado com sucesso + PDF gerado
+  Future<void> _mostrarDialogoPedidoEnviadoComPdf(BuildContext ctx, String numPedido, String filePath) async {
+    if (!mounted) return;
+    
+    await showDialog(
+      context: ctx,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 16),
+          title: Row(
+            children: [
+              Icon(Icons.check_circle_outline, color: Colors.green[700], size: 28),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text("Pedido Enviado com Sucesso", 
+                  style: TextStyle(color: Colors.green[700], fontSize: 18),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Seu pedido foi enviado para a central e o PDF foi gerado com sucesso!",
+                style: TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green[100]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.numbers, size: 18, color: Colors.green[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "Número do Pedido: $numPedido",
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.green[800],
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Icon(Icons.picture_as_pdf, size: 18, color: Colors.green[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            "PDF gerado em:",
+                            style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green[800]),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.green[200]!),
+                      ),
+                      child: Text(
+                        filePath,
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Fechar"),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.share, size: 18),
+              label: const Text("Compartilhar PDF"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5D5CDE),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                await PdfGeneratorSimples.compartilharArquivo(filePath);
+                if (mounted && context.mounted) Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // NOVO DIÁLOGO: Para mostrar erro no envio para API mas com PDF gerado
+  Future<void> _mostrarDialogoErroEnvioComPdfGerado(
+    BuildContext ctx, 
+    http.Response response, 
     Map<String, dynamic> dadosPedido,
+    String filePath
   ) async {
     if (!mounted) return;
     
-    // Tentar analisar a resposta de erro como JSON
-    Map<String, dynamic>? responseJson;
-    String errorMessage = "Erro desconhecido";
-
+    // Tentar extrair mensagem de erro da resposta
+    String? errorMessage;
     try {
       if (response.body.isNotEmpty) {
-        responseJson = jsonDecode(response.body) as Map<String, dynamic>;
-        errorMessage = responseJson['message'] ??
-            responseJson['error'] ??
-            "Erro ao transferir carrinho";
+        final responseData = jsonDecode(response.body);
+        if (responseData is Map && responseData.containsKey('message')) {
+          errorMessage = responseData['message'];
+        }
       }
-    } catch (e) {
-      errorMessage = response.body.isNotEmpty
-          ? response.body
-          : "Erro ao transferir carrinho (Código: ${response.statusCode})";
-    }
-
-    // Exibir detalhes do erro em diálogo simplificado
+    } catch (_) {}
+    
     await showDialog(
-      context: contextAtual,
-      builder: (BuildContext context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.error_outline, color: Colors.red[600], size: 24),
-            const SizedBox(width: 8),
-            Text("Erro", style: TextStyle(color: Colors.red[700])),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Não foi possível transferir o carrinho",
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 16,
+      context: ctx,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 16),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 28),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text("Atenção: Pedido Não Enviado", 
+                  style: TextStyle(color: Colors.deepOrange),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red[100]!),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "O PDF do pedido foi gerado com sucesso, mas houve um problema ao enviar para a central.",
+                style: TextStyle(fontSize: 16),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Detalhes do erro:",
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      color: Colors.red[800],
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red[100]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Erro (${response.statusCode}): ${errorMessage ?? 'Erro de comunicação com o servidor'}",
+                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.red[700]),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text("Código: ${response.statusCode}"),
-                  const SizedBox(height: 4),
-                  Text("Mensagem: $errorMessage"),
-                ],
+                    const SizedBox(height: 12),
+                    Text(
+                      "Você pode tentar novamente ou compartilhar o PDF gerado.",
+                      style: TextStyle(color: Colors.grey[800]),
+                    ),
+                  ],
+                ),
               ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[100]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.picture_as_pdf, size: 18, color: Colors.blue[700]),
+                        const SizedBox(width: 8),
+                        const Text(
+                          "PDF disponível em:",
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.blue[200]!),
+                      ),
+                      child: Text(
+                        filePath,
+                        style: const TextStyle(fontSize: 12),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text("Fechar"),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.share, size: 18),
+              label: const Text("Compartilhar PDF"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF5D5CDE),
+              ),
+              onPressed: () async {
+                await PdfGeneratorSimples.compartilharArquivo(filePath);
+              },
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text("Tentar Novamente"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5D5CDE),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () {
+                // Fechar o diálogo
+                Navigator.of(context).pop();
+                
+                // Tentar enviar novamente o pedido diretamente com os dados já preparados
+                // _reenviarPedido(dadosPedido, filePath);
+              },
             ),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text("Fechar"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF5D5CDE),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text("Tentar Novamente"),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -2007,29 +1919,3 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 }
-
-// Este arquivo deve ser criado separadamente:
-// lib/models/condicao_pagamento_model.dart
-//
-// class CondicaoPagamento {
-//   final int codcndpgt;
-//   final String dcrcndpgt;
-//   final double perdsccel;
-//   final String staati;
-//
-//   CondicaoPagamento({
-//     required this.codcndpgt,
-//     required this.dcrcndpgt,
-//     required this.perdsccel,
-//     required this.staati,
-//   });
-//
-//   factory CondicaoPagamento.fromJson(Map<String, dynamic> json) {
-//     return CondicaoPagamento(
-//       codcndpgt: json['codcndpgt'],
-//       dcrcndpgt: json['dcrcndpgt'],
-//       perdsccel: json['perdsccel'].toDouble(),
-//       staati: json['staati'],
-//     );
-//   }
-// }

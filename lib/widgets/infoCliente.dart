@@ -6,6 +6,7 @@ import 'package:flutter_docig_venda/screens/produtoScreen.dart';
 import 'package:flutter_docig_venda/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/screens/dupricata.dart';
+import 'package:flutter_docig_venda/screens/codigoScreen.dart';
 import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Adicionar esta importação
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -488,12 +489,12 @@ class Infocliente extends StatelessWidget {
     );
     
     // In your real implementation you would do something like:
-    // Navigator.push(
-    //   context,
-    //   MaterialPageRoute(
-    //     builder: (context) => CodigoScreen(cliente: cliente),
-    //   ),
-    // );
+     Navigator.push(
+       context,
+      MaterialPageRoute(
+        builder: (context) => AdicionarProdutoScreen(cliente: cliente),
+       ),
+     );
   }
 
   // Widget para exibir status do cliente

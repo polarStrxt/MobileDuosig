@@ -54,7 +54,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
   }
 
   void _inicializar() {
-    _quantidadeController.text = '1'; // Começar com 1 é mais prático
+    _quantidadeController.text = '0'; // Começar com 0 é mais prático
     _descontoController.text = '0';
     _verificarCarrinhoExistente();
   }
@@ -268,7 +268,7 @@ class _AdicionarProdutoScreenState extends State<AdicionarProdutoScreen> {
       setState(() {
         _produtoSelecionado = null;
         _codigoProdutoController.clear();
-        _quantidadeController.text = '1';
+        _quantidadeController.text = '0';
         _descontoController.text = '0';
       });
       
