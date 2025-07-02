@@ -8,7 +8,7 @@ import 'package:flutter_docig_venda/screens/LoginScreen.dart';
 
 void main() {
   runApp(
-    // --- ADICIONE O PROVIDER AQUI ---
+    // --- ADICIONE O PROVIDER AQUI --- 
     ChangeNotifierProvider(
       create: (context) => Carrinho(), // Cria a instância única do seu Carrinho
       child: const MyApp(), // Seu widget MyApp agora é filho do Provider

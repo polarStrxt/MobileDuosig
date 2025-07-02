@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart'; // Adicionar esta importação
+import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
 import 'package:flutter_docig_venda/widgets/botao.dart';
 import 'package:flutter_docig_venda/screens/produtoScreen.dart';
@@ -7,20 +7,63 @@ import 'package:flutter_docig_venda/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/models/cliente_model.dart';
 import 'package:flutter_docig_venda/screens/dupricata.dart';
 import 'package:flutter_docig_venda/screens/codigoScreen.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Adicionar esta importação
+import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:developer' as developer;
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
-class Infocliente extends StatelessWidget {
+class Infocliente extends StatefulWidget {
   final Cliente cliente;
+
+  const Infocliente({super.key, required this.cliente});
+
+  @override
+  State<Infocliente> createState() => _InfoclienteState();
+}
+
+class _InfoclienteState extends State<Infocliente> {
   final CarrinhosDao carrinhoDao = CarrinhosDao();
   final Color primaryColor = const Color(0xFF5D5CDE);
+  final Color secondaryColor = const Color(0xFF7472E0);
+  
+  bool _isLoadingDuplicatas = false;
+  List<Duplicata>? _duplicatasCache;
 
-  Infocliente({super.key, required this.cliente});
+  @override
+  void initState() {
+    super.initState();
+    // Pré-carregar duplicatas para uso posterior
+    _precarregarDuplicatas();
+  }
+
+  Future<void> _precarregarDuplicatas() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingDuplicatas = true;
+      });
+    }
+    
+    try {
+      _duplicatasCache = await _buscarDuplicatasDoCliente(widget.cliente.codcli);
+    } catch (e) {
+      developer.log("❌ Erro ao pré-carregar duplicatas: $e", name: 'Infocliente');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingDuplicatas = false;
+        });
+      }
+    }
+  }
 
   // Método para buscar duplicatas do cliente da API
   Future<List<Duplicata>> _buscarDuplicatasDoCliente(int codcli) async {
+    // Retorna o cache se disponível
+    if (_duplicatasCache != null) {
+      return _duplicatasCache!;
+    }
+    
     try {
       final baseUrl = "http://duotecsuprilev.ddns.com.br:8082";
       final url = Uri.parse("$baseUrl/v1/duplicatas/$codcli");
@@ -65,113 +108,442 @@ class Infocliente extends StatelessWidget {
     return documento;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text(
-          "Detalhes do Cliente",
-          style: TextStyle(fontWeight: FontWeight.w500),
+  // Manipuladores de eventos
+  Future<void> _handleTelefonePress(String telefone) async {
+    if (telefone.isEmpty) return;
+    
+    final Uri telUri = Uri(scheme: 'tel', path: telefone);
+    
+    try {
+      if (await url_launcher.canLaunchUrl(telUri)) {
+        await url_launcher.launchUrl(telUri);
+      } else {
+        if (mounted) {
+          _mostrarSnackBar('Não foi possível realizar a chamada telefônica.');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _mostrarSnackBar('Erro ao tentar ligar: $e');
+      }
+    }
+  }
+  
+  Future<void> _handleEmailPress(String email) async {
+    if (email.isEmpty) return;
+    
+    final Uri emailUri = Uri(scheme: 'mailto', path: email);
+    
+    try {
+      if (await url_launcher.canLaunchUrl(emailUri)) {
+        await url_launcher.launchUrl(emailUri);
+      } else {
+        if (mounted) {
+          _mostrarSnackBar('Não foi possível abrir o aplicativo de e-mail.');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _mostrarSnackBar('Erro ao tentar enviar e-mail: $e');
+      }
+    }
+  }
+  
+  Future<void> _handleMapPress() async {
+    final endereco = "${widget.cliente.endcli}, ${widget.cliente.baicli}, ${widget.cliente.muncli}, ${widget.cliente.ufdcli}";
+    final Uri mapsUri = Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(endereco)}");
+    
+    try {
+      if (await url_launcher.canLaunchUrl(mapsUri)) {
+        await url_launcher.launchUrl(mapsUri, mode: url_launcher.LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          _mostrarSnackBar('Não foi possível abrir o mapa.');
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _mostrarSnackBar('Erro ao tentar abrir o mapa: $e');
+      }
+    }
+  }
+
+  void _handleDuplicatasButtonPress(BuildContext context) async {
+    // Utilizar o cache se disponível, caso contrário, buscar novamente
+    if (_isLoadingDuplicatas) {
+      _mostrarSnackBar('Carregando duplicatas, aguarde um momento...');
+      return;
+    }
+
+    // Mostrar indicador de carregamento apenas se não tivermos cache
+    if (_duplicatasCache == null) {
+      setState(() {
+        _isLoadingDuplicatas = true;
+      });
+      
+      // Mostrar overlay de carregamento
+      _mostrarCarregamento(context);
+    }
+
+    try {
+      // Buscar duplicatas da API se necessário
+      final duplicatas = _duplicatasCache ?? await _buscarDuplicatasDoCliente(widget.cliente.codcli);
+      _duplicatasCache = duplicatas; // Atualizar o cache
+
+      // Verificar se o contexto ainda é válido
+      if (!context.mounted) return;
+      
+      // Fechar o indicador de carregamento se estiver aberto
+      if (_duplicatasCache == null && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      // Criar duplicata para navegação
+      final Duplicata duplicataToUse = duplicatas.isNotEmpty
+          ? duplicatas[0]
+          : Duplicata(
+              numdoc: "NOVA",
+              codcli: widget.cliente.codcli,
+              dtavct: DateTime.now().toString(),
+              vlrdpl: 0,
+            );
+
+      // Navegar para a tela de duplicatas
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DuplicataScreen(
+            duplicata: duplicataToUse,
+            cliente: widget.cliente,
+          ),
         ),
-        backgroundColor: primaryColor,
-        elevation: 0,
+      );
+    } catch (e) {
+      // Verificar se o contexto ainda é válido
+      if (!context.mounted) return;
+      
+      // Fechar o indicador de carregamento se estiver aberto
+      if (_duplicatasCache == null && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      // Mostrar erro
+      _mostrarSnackBar("Erro ao buscar duplicatas: $e");
+
+      // Criar duplicata temporária
+      final duplicataTemp = Duplicata(
+        numdoc: "NOVA",
+        codcli: widget.cliente.codcli,
+        dtavct: DateTime.now().toString(),
+        vlrdpl: 0,
+      );
+
+      // Navegar para a tela de duplicatas
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => DuplicataScreen(
+            duplicata: duplicataTemp,
+            cliente: widget.cliente,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingDuplicatas = false;
+        });
+      }
+    }
+  }
+
+  void _handleProdutosButtonPress(BuildContext context) async {
+    try {
+      await carrinhoDao.getCarrinhoAberto(widget.cliente.codcli);
+
+      if (!context.mounted) return;
+      
+      // Limpar o carrinho ANTES de navegar
+      final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+      carrinhoProvider.limpar();
+      
+      // Log para debugging
+      developer.log("CarrinhoProvider limpo ANTES de navegar para ProdutoScreen do cliente ${widget.cliente.codcli}",
+        name: 'Infocliente');
+      
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ProdutoScreen(cliente: widget.cliente),
+        ),
+      );
+    } catch (e) {
+      _mostrarSnackBar("Erro ao preparar produtos: $e");
+    }
+  }
+
+  void _handleAdicionarProdutoPress(BuildContext context) {
+    try {
+      // Limpar o carrinho ANTES de qualquer navegação que lide com produtos
+      final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
+      carrinhoProvider.limpar();
+      
+      developer.log("CarrinhoProvider limpo ANTES de adicionar produto individual para cliente ${widget.cliente.codcli}",
+        name: 'Infocliente');
+      
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => AdicionarProdutoScreen(cliente: widget.cliente),
+        ),
+      );
+    } catch (e) {
+      _mostrarSnackBar("Erro ao navegar para adição de produto: $e");
+    }
+  }
+
+  void _mostrarSnackBar(String mensagem) {
+    if (!mounted) return;
+    
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensagem),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.grey[800],
+        duration: const Duration(seconds: 3),
+        action: SnackBarAction(
+          label: 'OK',
+          textColor: Colors.white,
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
+        ),
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Cabeçalho simplificado com informações principais
-            _buildHeader(),
-
-            // Conteúdo principal
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Informações de Contato
-                  _buildSectionTitle("Informações de Contato"),
-                  _buildInfoRow("Telefone", cliente.numtel001, Icons.phone),
-                  if (cliente.numtel002?.isNotEmpty == true)
-                    _buildInfoRow("Telefone Adicional", cliente.numtel002!,
-                        Icons.phone_android),
-                  _buildInfoRow("E-mail", cliente.emailcli, Icons.email),
-                  _buildInfoRow("CNPJ/CPF",
-                      formatarDocumento(cliente.cgccpfcli), Icons.article),
-
-                  const SizedBox(height: 16),
-
-                  // Endereço
-                  _buildSectionTitle("Endereço"),
-                  _buildInfoRow(
-                      "Logradouro", cliente.endcli, Icons.location_on),
-                  _buildInfoRow("Bairro", cliente.baicli, Icons.location_city),
-                  _buildInfoRow("Cidade", cliente.muncli, Icons.location_city),
-                  _buildInfoRow("Estado", cliente.ufdcli, Icons.flag),
-
-                  const SizedBox(height: 16),
-
-                  // Informações Financeiras
-                  _buildSectionTitle("Informações Financeiras"),
-                  _buildFinancialInfoGrid(),
-
-                  const SizedBox(height: 24),
-
-                  // Botões de ação
-                  _buildActionButtons(context),
-                ],
-              ),
-            )
-          ],
+    );
+  }
+  
+  void _mostrarCarregamento(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: Card(
+          elevation: 8,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                  strokeWidth: 3,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  "Carregando dados...",
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      color: primaryColor,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text(
+          "Detalhes do Cliente",
+          style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
+        ),
+        backgroundColor: primaryColor,
+        elevation: 2,
+        actions: [
+          // Botão para compartilhar informações do cliente
+          IconButton(
+            icon: const Icon(Icons.share, color: Colors.white),
+            tooltip: 'Compartilhar dados do cliente',
+            onPressed: () {
+              // Implementação futura
+              _mostrarSnackBar('Compartilhar dados do cliente');
+            },
+          ),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          // Recarregar duplicatas ao fazer pull-to-refresh
+          _duplicatasCache = null;
+          await _precarregarDuplicatas();
+          if (mounted) {
+            _mostrarSnackBar('Dados atualizados');
+          }
+        },
+        color: primaryColor,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            // Cabeçalho com informações principais
+            SliverPersistentHeader(
+              pinned: true, // Mantém o cabeçalho visível ao rolar
+              delegate: _ClienteHeaderDelegate(
+                cliente: widget.cliente,
+                primaryColor: primaryColor,
+                formatarValor: formatarValor,
+                expandedHeight: 180.0,
+              ),
+            ),
+            
+            SliverToBoxAdapter(
+              child: _buildBody(),
+            ),
+          ],
+        ),
+      ),
+      // Botão de ação flutuante para iniciar um novo pedido
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _handleProdutosButtonPress(context),
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.shopping_cart_checkout),
+        label: const Text("Novo Pedido"),
+        elevation: 4,
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Nome e código
-          Text(
-            cliente.nomcli,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w500,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            "Código: ${cliente.codcli}",
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withAlpha(229), // Using withAlpha instead of withOpacity
-            ),
-          ),
-          const SizedBox(height: 12),
+          // Cartões informativos
+          _buildInformationCards(),
+          
+          // Informações do cliente
+          const SizedBox(height: 8),
+          _buildSectionTitle("Informações de Contato"),
+          _buildContactInfo(),
+          
+          const SizedBox(height: 16),
+          _buildSectionTitle("Endereço"),
+          _buildAddressInfo(),
 
-          // Status e limite de crédito
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStatusChip(cliente.staati),
-              Text(
-                formatarValor(cliente.vlrlimcrd),
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          const SizedBox(height: 16),
+          _buildSectionTitle("Informações Financeiras"),
+          _buildFinancialInfo(),
+          
+          const SizedBox(height: 24),
+          _buildActionButtons(),
+          
+          // Espaço adicional no final para não cobrir o conteúdo com o FAB
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInformationCards() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0),
+      child: Row(
+        children: [
+          // Status do cliente
+          Expanded(
+            child: _buildInfoCard(
+              icon: Icons.person_outlined,
+              title: "Status",
+              content: _getStatusText(widget.cliente.staati),
+              color: _getStatusColor(widget.cliente.staati),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Limite de crédito
+          Expanded(
+            child: _buildInfoCard(
+              icon: Icons.credit_card_outlined,
+              title: "Limite de Crédito",
+              content: formatarValor(widget.cliente.vlrlimcrd),
+              color: Colors.green[700]!,
+            ),
           ),
         ],
+      ),
+    );
+  }
+  
+  String _getStatusText(String status) {
+    switch (status.toUpperCase()) {
+      case "A": return "Ativo";
+      case "I": return "Inativo";
+      case "B": return "Bloqueado";
+      default: return status.isEmpty ? "Sem Status" : status;
+    }
+  }
+  
+  Color _getStatusColor(String status) {
+    switch (status.toUpperCase()) {
+      case "A": return Colors.green[700]!;
+      case "I": return Colors.red[700]!;
+      case "B": return Colors.orange[700]!;
+      default: return Colors.grey[700]!;
+    }
+  }
+
+  Widget _buildInfoCard({
+    required IconData icon,
+    required String title,
+    required String content,
+    required Color color,
+  }) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey[200]!, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 16, color: color),
+                const SizedBox(width: 6),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              content,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -182,16 +554,19 @@ class Infocliente extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 3,
-            height: 16,
-            color: primaryColor,
+            width: 4,
+            height: 18,
+            decoration: BoxDecoration(
+              color: primaryColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
           const SizedBox(width: 8),
           Text(
             title,
             style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w500,
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
               color: Colors.grey[800],
             ),
           ),
@@ -200,101 +575,292 @@ class Infocliente extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(String label, String value, IconData icon) {
-    final displayValue = value.isNotEmpty ? value : "Não informado";
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
+  Widget _buildContactInfo() {
+    return Card(
+      elevation: 1,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey[200]!, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Telefone principal
+            _buildContactItem(
+              icon: Icons.phone,
+              label: "Telefone",
+              value: widget.cliente.numtel001,
+              onTap: () => _handleTelefonePress(widget.cliente.numtel001),
             ),
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(icon, size: 16, color: Colors.grey[600]),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  displayValue,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: Colors.grey[800],
-                  ),
-                ),
+            if (widget.cliente.numtel002?.isNotEmpty == true) ...[
+              const Divider(height: 16),
+              _buildContactItem(
+                icon: Icons.phone_android,
+                label: "Telefone Adicional",
+                value: widget.cliente.numtel002!,
+                onTap: () => _handleTelefonePress(widget.cliente.numtel002!),
               ),
             ],
-          ),
-          const SizedBox(height: 8),
-          Divider(height: 1, color: Colors.grey[200]),
-        ],
+            const Divider(height: 16),
+            _buildContactItem(
+              icon: Icons.email,
+              label: "E-mail",
+              value: widget.cliente.emailcli,
+              onTap: () => _handleEmailPress(widget.cliente.emailcli),
+            ),
+            const Divider(height: 16),
+            _buildContactItem(
+              icon: Icons.article,
+              label: "CNPJ/CPF",
+              value: formatarDocumento(widget.cliente.cgccpfcli),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildFinancialInfoGrid() {
+  Widget _buildContactItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    VoidCallback? onTap,
+  }) {
+    final displayValue = value.isNotEmpty ? value : "Não informado";
+    final isValueAvailable = value.isNotEmpty;
+    
+    return InkWell(
+      onTap: isValueAvailable ? onTap : null,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              icon, 
+              size: 20, 
+              color: isValueAvailable ? primaryColor : Colors.grey[400],
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    displayValue,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: isValueAvailable ? Colors.grey[800] : Colors.grey[500],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isValueAvailable && onTap != null)
+              Icon(
+                Icons.arrow_forward_ios,
+                size: 14,
+                color: Colors.grey[400],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressInfo() {
+    final hasAddress = widget.cliente.endcli.isNotEmpty;
+    
+    return Card(
+      elevation: 1,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey[200]!, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildAddressField("Logradouro", widget.cliente.endcli),
+                      const SizedBox(height: 12),
+                      _buildAddressField("Bairro", widget.cliente.baicli),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildAddressField("Cidade", widget.cliente.muncli),
+                          ),
+                          const SizedBox(width: 16),
+                          SizedBox(
+                            width: 80,
+                            child: _buildAddressField("UF", widget.cliente.ufdcli),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (hasAddress) ...[
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: _handleMapPress,
+                icon: const Icon(Icons.map_outlined, size: 18),
+                label: const Text("Ver no Mapa"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressField(String label, String value) {
+    final displayValue = value.isNotEmpty ? value : "Não informado";
+    
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _buildFinancialItem(
-                  "Limite de Crédito",
-                  formatarValor(cliente.vlrlimcrd),
-                  Icons.account_balance_wallet),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildFinancialItem("Saldo Disponível",
-                  formatarValor(cliente.vlrsldlimcrd), Icons.payments),
-            ),
-          ],
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[600],
+          ),
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildFinancialItem("Duplicatas em Aberto",
-                  formatarValor(cliente.vlrdplabe), Icons.assignment),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildFinancialItem("Duplicatas Atrasadas",
-                  formatarValor(cliente.vlrdplats), Icons.assignment_late),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildFinancialItem("Condição de Pagamento",
-                  "Código: ${cliente.codcndpgt}", Icons.payment),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _buildFinancialItem("Tabela de Preço",
-                  "Código: ${cliente.codtab}", Icons.list_alt),
-            ),
-          ],
+        const SizedBox(height: 2),
+        Text(
+          displayValue,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: value.isNotEmpty ? Colors.grey[800] : Colors.grey[500],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildFinancialItem(String label, String value, IconData icon) {
+  Widget _buildFinancialInfo() {
+    return Card(
+      elevation: 1,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey[200]!, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            // Primeira linha
+            Row(
+              children: [
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Limite de Crédito",
+                    formatarValor(widget.cliente.vlrlimcrd),
+                    Icons.account_balance_wallet,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Saldo Disponível",
+                    formatarValor(widget.cliente.vlrsldlimcrd),
+                    Icons.payments,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Segunda linha
+            Row(
+              children: [
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Duplicatas em Aberto",
+                    formatarValor(widget.cliente.vlrdplabe),
+                    Icons.assignment,
+                    color: widget.cliente.vlrdplabe > 0 ? Colors.orange[700] : null,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Duplicatas Atrasadas",
+                    formatarValor(widget.cliente.vlrdplats),
+                    Icons.assignment_late,
+                    color: widget.cliente.vlrdplats > 0 ? Colors.red[700] : null,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Terceira linha
+            Row(
+              children: [
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Condição de Pagamento",
+                    "Código: ${widget.cliente.codcndpgt}",
+                    Icons.payment,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildFinancialItem(
+                    "Tabela de Preço",
+                    "Código: ${widget.cliente.codtab}",
+                    Icons.list_alt,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFinancialItem(String label, String value, IconData icon, {Color? color}) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: Colors.grey[50],
         border: Border.all(color: Colors.grey[200]!),
-        borderRadius: BorderRadius.circular(4),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -304,20 +870,25 @@ class Infocliente extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               color: Colors.grey[600],
+              fontWeight: FontWeight.w500,
             ),
           ),
           const SizedBox(height: 8),
           Row(
             children: [
-              Icon(icon, size: 16, color: primaryColor),
+              Icon(
+                icon, 
+                size: 18, 
+                color: color ?? primaryColor,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   value,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey[800],
+                    fontWeight: FontWeight.w600,
+                    color: color ?? Colors.grey[800],
                   ),
                 ),
               ),
@@ -328,173 +899,220 @@ class Infocliente extends StatelessWidget {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context) {
+  Widget _buildActionButtons() {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
             Expanded(
-              child: CustomButton(
+              child: _buildActionButton(
                 text: "Duplicatas",
                 icon: Icons.receipt_long,
+                isPrimary: true,
+                isLoading: _isLoadingDuplicatas,
                 onPressed: () => _handleDuplicatasButtonPress(context),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: CustomButton(
+              child: _buildActionButton(
                 text: "Produtos",
                 icon: Icons.shopping_cart,
+                isPrimary: true,
                 onPressed: () => _handleProdutosButtonPress(context),
               ),
             ),
           ],
         ),
         
-        // Adicionado um espaçamento vertical para separação dos botões
         const SizedBox(height: 12),
         
-        // Novo botão para adicionar produtos individualmente
-        CustomButton(
+        _buildActionButton(
           text: "Adicionar Produto Individual",
           icon: Icons.add_shopping_cart,
+          isPrimary: false,
           onPressed: () => _handleAdicionarProdutoPress(context),
         ),
       ],
     );
   }
 
-  void _handleDuplicatasButtonPress(BuildContext context) async {
-    // Mostrar indicador de carregamento
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-          strokeWidth: 2,
+  Widget _buildActionButton({
+    required String text,
+    required IconData icon,
+    required bool isPrimary,
+    required VoidCallback onPressed,
+    bool isLoading = false,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: isLoading ? null : onPressed,
+      icon: isLoading 
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  isPrimary ? Colors.white : primaryColor,
+                ),
+              ),
+            )
+          : Icon(icon, size: 18),
+      label: Text(text),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isPrimary ? primaryColor : Colors.white,
+        foregroundColor: isPrimary ? Colors.white : primaryColor,
+        elevation: isPrimary ? 2 : 0,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: isPrimary 
+              ? BorderSide.none 
+              : BorderSide(color: primaryColor),
         ),
-      ),
-    );
-
-    try {
-      // Buscar duplicatas da API
-      final duplicatas = await _buscarDuplicatasDoCliente(cliente.codcli);
-
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
-      
-      // Fechar o indicador de carregamento
-      Navigator.pop(context);
-
-      // Criar duplicata para navegação
-      final Duplicata duplicataToUse = duplicatas.isNotEmpty
-          ? duplicatas[0]
-          : Duplicata(
-              numdoc: "NOVA",
-              codcli: cliente.codcli,
-              dtavct: DateTime.now().toString(),
-              vlrdpl: 0,
-            );
-
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DuplicataScreen(
-            duplicata: duplicataToUse,
-            cliente: cliente,
-          ),
-        ),
-      );
-    } catch (e) {
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
-      
-      // Fechar o indicador de carregamento
-      Navigator.pop(context);
-
-      // Mostrar erro
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Erro ao buscar duplicatas: $e"),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-
-      // Criar duplicata temporária
-      final duplicataTemp = Duplicata(
-        numdoc: "NOVA",
-        codcli: cliente.codcli,
-        dtavct: DateTime.now().toString(),
-        vlrdpl: 0,
-      );
-
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DuplicataScreen(
-            duplicata: duplicataTemp,
-            cliente: cliente,
-          ),
-        ),
-      );
-    }
-  }
-
-  // AQUI ESTÁ A SOLUÇÃO: Modificação do método _handleProdutosButtonPress
-  void _handleProdutosButtonPress(BuildContext context) async {
-    await carrinhoDao.getCarrinhoAberto(cliente.codcli);
-
-    if (!context.mounted) return;
-    
-    // SOLUÇÃO: Limpar o carrinho ANTES de navegar para ProdutoScreen
-    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-    carrinhoProvider.limpar(); // <-- ESTA É A LINHA CRUCIAL!
-    
-    // Log para debugging (opcional)
-    developer.log("CarrinhoProvider limpo ANTES de navegar para ProdutoScreen do cliente ${cliente.codcli}",
-      name: 'Infocliente');
-    
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ProdutoScreen(cliente: cliente),
       ),
     );
   }
+}
 
-  // Também devemos aplicar a mesma solução no método de adicionar produto individual
-  void _handleAdicionarProdutoPress(BuildContext context) {
-    // SOLUÇÃO: Limpar o carrinho ANTES de qualquer navegação que lide com produtos
-    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-    carrinhoProvider.limpar();
+// Classe para o cabeçalho persistente com efeito de colapso
+class _ClienteHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final Cliente cliente;
+  final Color primaryColor;
+  final double expandedHeight;
+  final Function(double) formatarValor;
+
+  _ClienteHeaderDelegate({
+    required this.cliente,
+    required this.primaryColor,
+    required this.formatarValor,
+    required this.expandedHeight,
+  });
+
+  @override
+  double get minExtent => 120.0;
+  
+  @override
+  double get maxExtent => expandedHeight;
+
+  @override
+  bool shouldRebuild(covariant _ClienteHeaderDelegate oldDelegate) {
+    return oldDelegate.cliente != cliente || 
+           oldDelegate.primaryColor != primaryColor ||
+           oldDelegate.expandedHeight != expandedHeight;
+  }
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final double progress = shrinkOffset / (maxExtent - minExtent);
+    final bool isCollapsed = progress > 0.5;
     
-    developer.log("CarrinhoProvider limpo ANTES de adicionar produto individual para cliente ${cliente.codcli}",
-      name: 'Infocliente');
-    
-    // Since we don't have access to the full codebase, we'll just show a placeholder message
-    // Normally we would navigate to the CodigoScreen
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Navegando para a tela de código para adicionar produto"),
-        duration: Duration(seconds: 2),
+    return Material(
+      color: primaryColor,
+      elevation: 4.0,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Gradiente de fundo
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  primaryColor,
+                  Color.lerp(primaryColor, Colors.black, 0.2)!,
+                ],
+              ),
+            ),
+          ),
+          
+          // Conteúdo que aparece quando expandido
+          Opacity(
+            opacity: 1.0 - progress,
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      cliente.nomcli,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            "Código: ${cliente.codcli}",
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        if (cliente.staati.isNotEmpty)
+                          _buildStatusChip(cliente.staati),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "Limite: ${formatarValor(cliente.vlrlimcrd)}",
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.white.withOpacity(0.9),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          
+          // Conteúdo que aparece quando colapsado
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Opacity(
+              opacity: progress,
+              child: AppBar(
+                backgroundColor: Colors.transparent,
+                elevation: 0,
+                titleSpacing: 0,
+                title: Opacity(
+                  opacity: isCollapsed ? 1.0 : 0.0,
+                  child: Text(
+                    cliente.nomcli,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
-    
-    // In your real implementation you would do something like:
-     Navigator.push(
-       context,
-      MaterialPageRoute(
-        builder: (context) => AdicionarProdutoScreen(cliente: cliente),
-       ),
-     );
   }
 
   // Widget para exibir status do cliente
@@ -505,7 +1123,7 @@ class Infocliente extends StatelessWidget {
     // Define cores e texto com base no status
     switch (status.toUpperCase()) {
       case "A":
-        backgroundColor = Colors.green;
+        backgroundColor = Colors.green[700]!;
         statusText = "Ativo";
         break;
       case "I":
@@ -522,7 +1140,7 @@ class Infocliente extends StatelessWidget {
     }
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: backgroundColor,
         borderRadius: BorderRadius.circular(4),

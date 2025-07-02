@@ -6,7 +6,7 @@ class DatabaseHelper {
   static const String _databaseName = "docig_venda.db";
   // Verifique se esta versão é maior que a anterior no dispositivo do usuário
   // se você já distribuiu o app antes com o erro.
-  static const int _databaseVersion = 6; // Mantenha ou incremente conforme necessário
+  static const int _databaseVersion = 8; // Mantenha ou incremente conforme necessário
 
   // --- Constantes com Nomes de Tabelas ---
   static const String tableProdutos = 'produtos';
@@ -16,6 +16,7 @@ class DatabaseHelper {
   static const String tableConfig = 'config';
   static const String tableCarrinhos = 'carrinhos';
   static const String tableCarrinhoItens = 'carrinho_itens';
+  static const String tablePedidosParaEnvio = 'pedidos_para_envio';
   // static const String tableCupons = 'cupons'; // Se existir
 
   static final DatabaseHelper instance = DatabaseHelper._init();
@@ -60,6 +61,7 @@ class DatabaseHelper {
     _createConfigTable(batch);
     _createCarrinhosTable(batch);
     _createCarrinhoItensTable(batch);
+    _createPedidosParaEnvioTable(batch);
 
     await batch.commit();
     _logger.i("Banco de dados criado com sucesso.");
@@ -231,4 +233,18 @@ class DatabaseHelper {
     batch.execute('CREATE INDEX IF NOT EXISTS idx_carrinho_itens_id_carrinho ON $tableCarrinhoItens (id_carrinho);');
      _logger.d("Comando CREATE TABLE IF NOT EXISTS $tableCarrinhoItens e INDEX adicionados ao batch.");
   }
+
+  void _createPedidosParaEnvioTable(Batch batch) {
+  batch.execute('''
+  CREATE TABLE $tablePedidosParaEnvio (
+    id_pedido_local INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo_pedido_app TEXT NOT NULL UNIQUE, 
+    json_do_pedido TEXT NOT NULL,
+    status_envio TEXT NOT NULL DEFAULT 'PENDENTE',
+    data_criacao TEXT NOT NULL
+  );
+  ''');
+  batch.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_status ON $tablePedidosParaEnvio (status_envio);');
+  _logger.d("Comando CREATE TABLE $tablePedidosParaEnvio e INDEX adicionados ao batch.");
+}
 }

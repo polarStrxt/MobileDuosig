@@ -1,14 +1,13 @@
-// lib/screens/produto_screen.dart (Nome de arquivo sugerido)
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
+import 'package:flutter_docig_venda/services/carrinhoService.dart'; // Considere renomear para carrinho_service.dart
+import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Considere renomear para carrinho_screen.dart
+import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/services/api_client.dart'; // Necessário para ApiResult
 import 'package:flutter_docig_venda/models/produto_model.dart';
 import 'package:flutter_docig_venda/widgets/cardProdutos.dart'; // Considere renomear para card_produtos.dart
 import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Seu ChangeNotifier
-import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Considere renomear para carrinho_screen.dart
-import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
-import 'package:flutter_docig_venda/services/carrinhoService.dart'; // Considere renomear para carrinho_service.dart
-import 'package:flutter_docig_venda/services/api_client.dart'; // Necessário para ApiResult
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 
 class ProdutoScreen extends StatefulWidget {

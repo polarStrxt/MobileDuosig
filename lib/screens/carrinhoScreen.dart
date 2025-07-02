@@ -8,6 +8,9 @@ import 'package:flutter_docig_venda/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
 import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
 import 'package:flutter_docig_venda/models/carrinho_model.dart';
+import 'package:flutter_docig_venda/models/registrar_pedido_local.dart';
+import 'package:flutter_docig_venda/services/Dao/PedidosParaEnvioDao.dart';
+import 'package:flutter_docig_venda/services/database_helper.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -1312,181 +1315,267 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
   // MÉTODO REFATORADO: _transferirCarrinho para implementar o novo fluxo
   Future<void> _transferirCarrinho({
-    required Carrinho carrinhoProvider,
-    String observacao = '',
-    String formaPagamento = '1',
-    String formaPagamentoDesc = 'A VISTA',
-  }) async {
-    if (!mounted || widget.cliente == null || widget.cliente!.codcli == null) {
-      _logger.e("Transferência abortada: widget desmontado ou cliente inválido.");
-      if (mounted) {
-        _mostrarMensagemErroGeral("Cliente inválido. Não é possível transferir.");
-      }
+  required Carrinho carrinhoProvider, // Sua classe Carrinho do Provider
+  String observacao = '',
+  String formaPagamento = '1', // Código da forma de pagamento
+  String formaPagamentoDesc = 'A VISTA', // Descrição da forma de pagamento
+}) async {
+  if (!mounted || widget.cliente == null || widget.cliente!.codcli == null) {
+    _logger.e("Transferência abortada: widget desmontado ou cliente inválido.");
+    if (mounted) {
+      _mostrarMensagemErroGeral("Cliente inválido. Não é possível transferir o pedido.");
+    }
+    return;
+  }
+
+  // Se _isProcessingAction já é um membro da classe State:
+  if (_isProcessingAction) {
+      _logger.w("Ação de transferência já em progresso. Abortando nova chamada.");
       return;
+  }
+  setState(() { _isProcessingAction = true; });
+
+  BuildContext? dialogContext; // Para fechar o diálogo de progresso
+  ValueNotifier<String> progressoNotifier = ValueNotifier("Processando seu pedido...");
+
+  // Mostra o diálogo de progresso inicial
+  showDialog(
+    context: context,
+    barrierDismissible: false, // Não pode fechar clicando fora
+    builder: (buildDialogContext) {
+      dialogContext = buildDialogContext;
+      return ValueListenableBuilder<String>(
+        valueListenable: progressoNotifier,
+        builder: (context, message, child) {
+          return AlertDialog(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 20),
+                Text(message, textAlign: TextAlign.center),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+
+  String? filePathDoPdfGerado;
+  String numPedidoFinalGerado = "";
+  final DateTime agoraParaPedido = DateTime.now(); // Usado para data do pedido e data de criação local
+
+  // Instanciando o DAO aqui. Em apps maiores, considere injeção de dependência.
+  final PedidosParaEnvioDao _pedidosParaEnvioDao = PedidosParaEnvioDao(DatabaseHelper.instance, _logger);
+
+  try {
+    // 1. Buscar CarrinhoModel do banco e Salvar Observação Localmente (Opcional)
+    // Seu código para interagir com CarrinhosDao, se necessário antes de gerar o pedido
+    progressoNotifier.value = "Verificando carrinho local...";
+    final carrinhosDao = CarrinhosDao(); // Assumindo que você tem essa classe DAO
+    CarrinhoModel? carrinhoDoBanco = await carrinhosDao.getCarrinhoAberto(widget.cliente!.codcli!);
+
+    if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
+      if (carrinhoDoBanco.observacoes != observacao) {
+        await carrinhosDao.atualizarObservacoesCarrinho(carrinhoDoBanco.id!, observacao);
+        _logger.i("Observação salva no carrinho local ID BD: ${carrinhoDoBanco.id}");
+      }
+    } else {
+      _logger.w("Nenhum carrinho local aberto para cliente ${widget.cliente!.codcli}. Observação não será salva localmente.");
     }
 
-    setState(() { _isProcessingAction = true; });
+    // 2. Gerar Identificadores do Pedido
+    progressoNotifier.value = "Gerando identificador do pedido...";
+    if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
+      String dataCriacaoStr = DateFormat('yyyyMMddHHmmss').format(carrinhoDoBanco.dataCriacao); // Mais precisão para unicidade
+      numPedidoFinalGerado = "$dataCriacaoStr-${widget.cliente!.codcli}-${carrinhoDoBanco.id}";
+    } else {
+      // Fallback se não houver carrinho no banco (ex: primeira venda, ou app limpo)
+      String dataFormatadaFallback = DateFormat('yyyyMMddHHmmss').format(agoraParaPedido);
+      numPedidoFinalGerado = "${dataFormatadaFallback}-${widget.cliente!.codcli.toString().padLeft(3, '0')}-NO_CART_ID";
+    }
+    _logger.i("Número do Pedido Gerado: $numPedidoFinalGerado");
 
-    BuildContext? dialogContext;
-    // Usar um ValueNotifier para mudar o texto do diálogo de progresso
-    ValueNotifier<String> progressoNotifier = ValueNotifier("Processando seu pedido...");
+    // 3. TENTAR GERAR O PDF
+    progressoNotifier.value = "Gerando PDF do pedido...";
+    _logger.d("Tentando gerar PDF com numPedido: $numPedidoFinalGerado e observacao: $observacao");
 
-    showDialog(
-      context: context, // Usar context da tela para o diálogo inicial
-      barrierDismissible: false,
-      builder: (buildDialogContext) {
-        dialogContext = buildDialogContext;
-        return ValueListenableBuilder<String>(
-          valueListenable: progressoNotifier,
-          builder: (context, message, child) {
-            return AlertDialog(
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 20),
-                  Text(message),
-                ],
-              ),
-            );
-          },
-        );
-      },
+    // Cria uma cópia do estado atual do carrinhoProvider para passar ao PDF
+    final Carrinho carrinhoAtualParaPdf = Carrinho(
+        itens: Map.from(carrinhoProvider.itens),
+        descontos: Map.from(carrinhoProvider.descontos),
+        // Copie outros campos relevantes do seu Carrinho Provider
     );
 
-    String? filePathDoPdfGerado; // Para armazenar o caminho do PDF
-    String numPedidoFinalGerado = ""; // Para armazenar o número do pedido
+    // Assumindo que _gerarPDFComDadosSalvos é um método da sua classe
+    filePathDoPdfGerado = await _gerarPDFComDadosSalvos(
+        carrinhoParaGeracao: carrinhoAtualParaPdf,
+        contextAtual: context, // Context da tela
+        observacao: observacao,
+        cliente: widget.cliente, // Seu objeto Cliente
+        formaPagamento: formaPagamentoDesc,
+        numPedido: numPedidoFinalGerado
+    );
+
+    if (!mounted) { progressoNotifier.dispose(); return; }
+
+    if (filePathDoPdfGerado == null) {
+      _logger.e("Falha ao gerar PDF. Pedido NÃO será processado.");
+      if (dialogContext != null) { Navigator.of(dialogContext!, rootNavigator: true).pop(); dialogContext = null; }
+      _mostrarMensagemErroGeral("Falha ao gerar o PDF. O pedido não foi processado. Por favor, tente novamente.");
+      // Não precisa mais do setState aqui, pois o finally cuidará.
+      return; // Aborta a função
+    }
+    _logger.i("PDF gerado com sucesso em: $filePathDoPdfGerado");
+
+    // 4. Preparar dados para o JSON e tentar enviar para API
+    progressoNotifier.value = "Preparando dados do pedido...";
+    final int tabelaPreco = widget.cliente!.codtab;
+    List<Map<String, dynamic>> produtosJson = [];
+    carrinhoProvider.itens.forEach((produto, quantidade) { // 'produto' aqui deve ser seu objeto ProdutoModel
+      double preco = produto.getPrecoParaTabela(tabelaPreco); // Método do seu ProdutoModel
+      double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
+
+      produtosJson.add({
+        "cod_produto": produto.codprd.toString(), // Supondo que 'codprd' existe no seu ProdutoModel
+        "quantidade": quantidade,
+        "vlr_unitario": preco,
+        "per_desconto": desconto,
+        // Adicione outros campos do produto que a API espera
+        // "dcr_produto": produto.dcrprd, // Exemplo
+      });
+    });
+
+    final Map<String, dynamic> dadosPedido = {
+      "num_pedido": numPedidoFinalGerado,
+      "id": numPedidoFinalGerado,
+      "data_pedido": DateFormat('dd/MM/yyyy HH:mm:ss').format(agoraParaPedido), // Formato mais completo
+      "cod_cliente": widget.cliente!.codcli.toString(),
+      "vlr_pedido": carrinhoProvider.calcularValorTotal(tabelaPreco), // Método do seu Carrinho Provider
+      "cod_vendedor": "001", // Ou seu código de vendedor real
+      "cod_condicao_pagto": formaPagamento,
+      "dcr_condicao_pagto": formaPagamentoDesc,
+      "observacoes": observacao,
+      "produtos": produtosJson,
+      // Adicione quaisquer outros campos que a API espera no JSON principal
+    };
+
+    progressoNotifier.value = "Enviando pedido para a central...";
+    _logger.i('Tentando enviar JSON para API: ${jsonEncode(dadosPedido)}');
+    final Uri uri = Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
+    http.Response? response;
+    bool postSucesso = false;
 
     try {
-      // 1. Buscar CarrinhoModel do banco e Salvar Observação Localmente
-      final carrinhosDao = CarrinhosDao(); // Idealmente injetado
-      CarrinhoModel? carrinhoDoBanco = await carrinhosDao.getCarrinhoAberto(widget.cliente!.codcli!);
-
-      if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
-        if (carrinhoDoBanco.observacoes != observacao) {
-          await carrinhosDao.atualizarObservacoesCarrinho(carrinhoDoBanco.id!, observacao);
-          _logger.i("Observação salva no carrinho local ID BD: ${carrinhoDoBanco.id}");
-          // Removidas referências a propriedades e métodos que não existem em Carrinho
-        }
-      } else {
-        _logger.w("Nenhum carrinho local aberto para cliente ${widget.cliente!.codcli}. Observação não será salva localmente.");
-        // Se não há carrinho, a geração do num_pedido usará fallback, e o PDF também refletirá isso.
-      }
-
-      // 2. Gerar Identificadores do Pedido
-      final DateTime agoraParaPedido = DateTime.now();
-      if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
-        String dataCriacaoStr = DateFormat('yyyyMMdd').format(carrinhoDoBanco.dataCriacao);
-        numPedidoFinalGerado = "$dataCriacaoStr-${widget.cliente!.codcli}-${carrinhoDoBanco.id}";
-      } else {
-        String dataFormatadaFallback = DateFormat('yyyyMMdd').format(agoraParaPedido);
-        numPedidoFinalGerado = "$dataFormatadaFallback-${widget.cliente!.codcli.toString().padLeft(3, '0')}-NO_CART_ID";
-      }
-      _logger.i("Número do Pedido Gerado: $numPedidoFinalGerado");
-
-      // 3. TENTAR GERAR O PDF
-      progressoNotifier.value = "Gerando PDF do pedido...";
-      _logger.d("Tentando gerar PDF com numPedido: $numPedidoFinalGerado e observacao: $observacao");
-
-      // Para _gerarPDFComDadosSalvos, vamos passar uma cópia do estado atual do provider
-      // para garantir que o PDF reflita o que o usuário está vendo.
-      final Carrinho carrinhoAtualParaPdf = Carrinho(
-          itens: Map.from(carrinhoProvider.itens),
-          descontos: Map.from(carrinhoProvider.descontos),
-      );
-
-      // O PdfGeneratorSimples precisa do Cliente, e outros dados que já temos.
-      filePathDoPdfGerado = await _gerarPDFComDadosSalvos(
-          carrinhoParaGeracao: carrinhoAtualParaPdf, // Passa o estado atual
-          contextAtual: context, // Passa o context da tela
-          observacao: observacao,
-          cliente: widget.cliente,
-          formaPagamento: formaPagamentoDesc,
-          numPedido: numPedidoFinalGerado
-      );
-
-      if (!mounted) return;
-
-      if (filePathDoPdfGerado == null) {
-        _logger.e("Falha ao gerar PDF. Pedido NÃO será enviado.");
-        if (dialogContext != null) Navigator.of(dialogContext!, rootNavigator: true).pop();
-        setState(() { _isProcessingAction = false; });
-        _mostrarMensagemErroGeral("Falha ao gerar o PDF. O pedido não foi enviado. Por favor, tente novamente.");
-        return;
-      }
-      _logger.i("PDF gerado com sucesso em: $filePathDoPdfGerado");
-
-      // 4. Se PDF OK, TENTAR ENVIAR PARA API
-      progressoNotifier.value = "Enviando pedido para a central...";
-      final int tabelaPreco = widget.cliente!.codtab;
-      List<Map<String, dynamic>> produtosJson = [];
-      carrinhoProvider.itens.forEach((produto, quantidade) {
-        double preco = produto.getPrecoParaTabela(tabelaPreco);
-        double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
-
-        produtosJson.add({
-          "cod_produto": produto.codprd.toString(),
-          "quantidade": quantidade,
-          "vlr_unitario": preco,
-          "per_desconto": desconto,
-        });
-      });
-
-      final Map<String, dynamic> dadosPedido = {
-        "num_pedido": numPedidoFinalGerado,
-        "id": numPedidoFinalGerado, // Usando o mesmo para o ID do JSON
-        "data_pedido": DateFormat('dd/MM/yyyy').format(agoraParaPedido),
-        "cod_cliente": widget.cliente!.codcli.toString(),
-        "vlr_pedido": carrinhoProvider.calcularValorTotal(tabelaPreco),
-        "cod_vendedor": "001",
-        "cod_condicao_pagto": formaPagamento,
-        "dcr_condicao_pagto": formaPagamentoDesc,
-        "observacoes": observacao,
-        "produtos": produtosJson,
-      };
-
-      _logger.i('Enviando JSON para API: ${jsonEncode(dadosPedido)}');
-      final Uri uri = Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
-      final response = await http.post(
+      response = await http.post(
           uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(dadosPedido));
+          headers: {'Content-Type': 'application/json; charset=UTF-8'},
+          body: jsonEncode(dadosPedido)
+      ).timeout(const Duration(seconds: 30)); // Ajuste o timeout conforme necessário
 
-      if (dialogContext != null && mounted) Navigator.of(dialogContext!, rootNavigator: true).pop();
-      if (!mounted) return;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        postSucesso = true;
+        _logger.i("POST para API bem-sucedido (Status: ${response.statusCode}). Resposta: ${response.body}");
+      } else {
+        _logger.w("Falha no POST para API (Status: ${response.statusCode}). Resposta: ${response.body}.");
+        // postSucesso continua false, indicando que será salvo localmente
+      }
+    } catch (e, s) {
+      _logger.e("Erro de conexão/timeout durante POST para API.", error: e, stackTrace: s);
+      // postSucesso continua false, indicando que será salvo localmente
+    }
 
-      _logger.i('Resposta da API (${response.statusCode}): ${response.body}');
+    // Fechar o diálogo de progresso ANTES de qualquer outro diálogo ou navegação
+    if (dialogContext != null && mounted) {
+      Navigator.of(dialogContext!, rootNavigator: true).pop();
+      dialogContext = null;
+    }
+    if (!mounted) { progressoNotifier.dispose(); return; }
 
-      if (response.statusCode >= 200 && response.statusCode < 300) { // SUCESSO NO POST
-        _logger.i("POST para API bem-sucedido. Finalizando carrinho local...");
+
+    if (postSucesso) {
+      _logger.i("Finalizando carrinho local após POST bem-sucedido...");
+      // Assumindo que _carrinhoService.finalizarCarrinho existe e retorna algo como {isSuccess: bool, message: String?}
+      final resultadoFinalizacaoLocal = await _carrinhoService.finalizarCarrinho(widget.cliente!);
+      if (!mounted) { progressoNotifier.dispose(); return; }
+
+      if (resultadoFinalizacaoLocal.isSuccess) {
+        Provider.of<Carrinho>(context, listen: false).limpar();
+        // setState(() { _isProcessingAction = false; }); // Será feito no finally
+        await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado!);
+      } else {
+        // setState(() { _isProcessingAction = false; }); // Será feito no finally
+        _mostrarMensagemErroGeral(
+            "Pedido enviado para API (Nº: $numPedidoFinalGerado), mas erro ao fechar o carrinho local. Contate o suporte. O carrinho na tela será limpo.");
+        Provider.of<Carrinho>(context, listen: false).limpar();
+      }
+    } else { // FALHA NO POST ORIGINAL -> Salvar localmente e finalizar como sucesso para o usuário
+      _logger.i("POST falhou. Tentando salvar pedido no banco local para envio posterior...");
+      
+      final pedidoParaSalvarLocalmente = RegistroPedidoLocal(
+          codigoPedidoApp: numPedidoFinalGerado,
+          jsonDoPedido: dadosPedido,
+          dataCriacao: agoraParaPedido,
+          statusEnvio: 'PENDENTE',
+      );
+
+      try {
+        await _pedidosParaEnvioDao.inserir(pedidoParaSalvarLocalmente);
+        _logger.i("Pedido (Nº: $numPedidoFinalGerado) salvo localmente com sucesso para envio posterior.");
+
+        _logger.i("Finalizando carrinho local após salvar para envio posterior...");
         final resultadoFinalizacaoLocal = await _carrinhoService.finalizarCarrinho(widget.cliente!);
-        if (!mounted) return;
+        if (!mounted) { progressoNotifier.dispose(); return; }
 
         if (resultadoFinalizacaoLocal.isSuccess) {
           Provider.of<Carrinho>(context, listen: false).limpar();
-          setState(() { _isProcessingAction = false; });
-          await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado);
+          // setState(() { _isProcessingAction = false; }); // Será feito no finally
+          await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado!); // Mesmo diálogo de sucesso
+          _logger.i("Fluxo de 'falha no POST, salvo localmente' concluído com sucesso para o usuário.");
         } else {
-          setState(() { _isProcessingAction = false; });
+          // setState(() { _isProcessingAction = false; }); // Será feito no finally
           _mostrarMensagemErroGeral(
-              "Pedido enviado (Nº: $numPedidoFinalGerado) e PDF gerado, mas erro ao fechar carrinho local. Contate suporte. Carrinho na tela será limpo.");
+              "Pedido (Nº: $numPedidoFinalGerado) salvo para envio posterior, mas erro ao fechar o carrinho localmente. Contate o suporte. O carrinho na tela será limpo.");
           Provider.of<Carrinho>(context, listen: false).limpar();
         }
-      } else { // FALHA NO POST
-        setState(() { _isProcessingAction = false; });
-        await _mostrarDialogoErroEnvioComPdfGerado(context, response, dadosPedido, filePathDoPdfGerado);
+      } catch (dbError, dbStack) {
+        _logger.f("ERRO CRÍTICO: Falha no POST E falha ao salvar pedido localmente (Nº: $numPedidoFinalGerado).", error: dbError, stackTrace: dbStack);
+        // setState(() { _isProcessingAction = false; }); // Será feito no finally
+        
+        // Usar a função _mostrarDialogoErroEnvioComPdfGerado ou uma mensagem mais específica
+        // Se response for nulo (caiu no catch da conexão), precisa tratar.
+        if (response != null) {
+            await _mostrarDialogoErroEnvioComPdfGerado(context, response, dadosPedido, filePathDoPdfGerado!);
+        } else {
+            _mostrarMensagemErroGeral("Falha crítica ao processar seu pedido (Nº: $numPedidoFinalGerado). Não foi possível enviar nem salvar. Tente novamente ou contate o suporte.");
+        }
+        // IMPORTANTE: Neste caso de falha crítica, NÃO limpamos o carrinho da UI.
+        // O usuário precisa estar ciente que o pedido não foi efetivado.
       }
+    }
+  } catch (e, s) { // Catch principal para erros não esperados (ex: na geração do PDF, numPedido, etc.)
+    _logger.e("Erro crítico não tratado em _transferirCarrinho", error: e, stackTrace: s);
+    if (dialogContext != null && mounted) {
+      Navigator.of(dialogContext!, rootNavigator: true).pop();
+      dialogContext = null;
+    }
+    if (!mounted) { progressoNotifier.dispose(); return; }
+    // setState(() { _isProcessingAction = false; }); // Será feito no finally
 
-    } catch (e, s) {
-      _logger.e("Erro crítico em _transferirCarrinho", error: e, stackTrace: s);
-      if (dialogContext != null && mounted) Navigator.of(dialogContext!, rootNavigator: true).pop();
-      if (!mounted) return;
+    // Se 'e' for uma exceção específica que você trata, pode chamar um diálogo específico.
+    // Senão, um diálogo de erro genérico.
+    // A função _mostrarDialogoErroConexao parece ser para erros de conexão,
+    // mas este catch é mais amplo.
+    _mostrarMensagemErroGeral("Ocorreu um erro inesperado ao processar seu pedido. Por favor, tente novamente. Detalhe: ${e.toString()}");
+  } finally {
+    progressoNotifier.dispose(); // Sempre liberar o notifier
+    if (mounted && _isProcessingAction) { // Garante que o estado de processamento seja resetado
       setState(() { _isProcessingAction = false; });
-      await _mostrarDialogoErroConexao(context, e, observacao, formaPagamento, carrinhoProvider);
-    } finally {
-       progressoNotifier.dispose(); // Limpa o notifier
     }
   }
+}
+
 
   // MÉTODO REFATORADO: _gerarPDFComDadosSalvos para retornar o caminho do arquivo
   Future<String?> _gerarPDFComDadosSalvos({ // Retorna o caminho do arquivo ou null
