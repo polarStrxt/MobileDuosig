@@ -18,6 +18,7 @@ class DatabaseHelper {
   static const String tablePedidoItens = 'pedido_itens';
   static const String tablePedidosParaEnvio = 'pedidos_para_envio';
   static const String tableSincronizacao = 'sincronizacao';
+  static const String tableClienteProduto = 'cliente_produto';
 
   static final DatabaseHelper instance = DatabaseHelper._init();
   static Database? _database;
@@ -64,6 +65,7 @@ class DatabaseHelper {
     _createConfigTable(batch);
     _createCondicaoPagamentoTable(batch);
     _createProdutosTable(batch);
+    _createClienteProdutoTable(batch);
     
     // Tabelas com FK depois
     _createClientesTable(batch);
@@ -74,6 +76,7 @@ class DatabaseHelper {
     _createPedidoItensTable(batch);
     _createPedidosParaEnvioTable(batch);
     _createSincronizacaoTable(batch);
+    
     
     // Criar todos os índices
     _createIndexes(batch);
@@ -383,6 +386,21 @@ class DatabaseHelper {
     _logger.d("Tabela $tableSincronizacao criada.");
   }
 
+  void _createClienteProdutoTable(Batch batch) {
+    batch.execute('''
+    CREATE TABLE $tableClienteProduto (
+      codcli INTEGER NOT NULL,
+      codprd INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      PRIMARY KEY (codcli, codprd),
+      FOREIGN KEY (codcli) REFERENCES clientes(codcli) ON DELETE CASCADE ON UPDATE CASCADE,
+      FOREIGN KEY (codprd) REFERENCES produtos(codprd) ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    ''');
+    _logger.d("Tabela $tableClienteProduto criada.");
+  }
+
   // ============= CRIAÇÃO DE ÍNDICES =============
   
   void _createIndexes(Batch batch) {
@@ -431,6 +449,10 @@ class DatabaseHelper {
     // Índices para Sincronização
     batch.execute('CREATE INDEX idx_sync_tabela_status ON $tableSincronizacao(tabela, status);');
     batch.execute('CREATE INDEX idx_sync_data ON $tableSincronizacao(data_inicio DESC);');
+
+    // Índices para Cliente Produto
+    batch.execute('CREATE INDEX idx_cliente_produto_cliente ON $tableClienteProduto(codcli);');
+    batch.execute('CREATE INDEX idx_cliente_produto_produto ON $tableClienteProduto(codprd);');
     
     _logger.d("Todos os índices criados.");
   }

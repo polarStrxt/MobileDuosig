@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 // --- ADICIONE ESTAS IMPORTAÇÕES ---
 import 'package:provider/provider.dart';
-import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Certifique-se que este é o caminho correto para sua classe Carrinho
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart';
 // ---------------------------------
 // Corrija o nome do arquivo para o padrão (login_screen.dart)
-import 'package:flutter_docig_venda/presentation/screens/LoginScreen.dart'; 
+import 'package:flutter_docig_venda/presentation/screens/LoginScreen.dart';
 
 void main() {
   runApp(

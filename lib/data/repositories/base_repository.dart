@@ -29,7 +29,7 @@ abstract class BaseRepository<T> {
     );
   }
 
-  // Insere múltiplos registros em batch
+  /// Insere múltiplos registros em batch
   Future<void> upsertBatch(List<T> models) async {
     final db = await dbHelper.database;
     final batch = db.batch();
