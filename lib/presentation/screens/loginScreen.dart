@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/screens/homeScreen.dart';
-import 'package:flutter_docig_venda/widgets/textField.dart';
+import 'package:flutter_docig_venda/presentation/screens/homeScreen.dart';
+import 'package:flutter_docig_venda/presentation/widgets/textField.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);

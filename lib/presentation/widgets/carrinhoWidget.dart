@@ -1,10 +1,10 @@
 // lib/widgets/carrinho_widget.dart (Nome de arquivo sugerido)
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart'; // Pacote para gerenciamento de estado
-import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Sua classe Carrinho (ChangeNotifier)
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Sua classe Carrinho (ChangeNotifier)
 import 'package:flutter_docig_venda/services/api_client.dart'; // Onde ApiResult está definido
 import 'package:logger/logger.dart'; // Para logging
 

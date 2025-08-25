@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';

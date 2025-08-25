@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:logger/logger.dart'; // Para logging
-import 'package:flutter_docig_venda/services/database_helper.dart'; // Ajuste o caminho
-import 'package:flutter_docig_venda/models/registrar_pedido_local.dart';
+import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart'; // Ajuste o caminho
+import 'package:flutter_docig_venda/data/models/registrar_pedido_local.dart';
 
 
 class PedidosParaEnvioDao {

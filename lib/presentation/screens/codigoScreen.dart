@@ -3,11 +3,11 @@
 
 import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
 import 'package:flutter_docig_venda/services/carrinhoservice.dart'; // Verifique o nome: carrinho_service.dart
-import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Verifique o nome: carrinho_screen.dart
-import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/presentation/screens/carrinhoScreen.dart'; // Verifique o nome: carrinho_screen.dart
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/api_client.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Seu ChangeNotifier Carrinho
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Seu ChangeNotifier Carrinho
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // Para FilteringTextInputFormatter

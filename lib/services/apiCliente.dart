@@ -1,4 +1,4 @@
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/api_client.dart'; // Referência à classe que criamos anteriormente
 
 /// Serviço responsável por gerir operações relacionadas a clientes
@@ -12,7 +12,7 @@ class ClienteService {
   ClienteService({ApiClient? apiClient})
       : _apiClient = apiClient ??
             ApiClient(
-              baseUrl: 'http://duotecsuprilev.ddns.com.br:8082 ',
+              baseUrl: 'http://duotecsuprilev.ddns.com.br:8082',
               empresaId: '001',
               dataReferencia: '31.01.1980',
             );

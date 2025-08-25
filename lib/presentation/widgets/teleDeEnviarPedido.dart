@@ -2,8 +2,8 @@ import 'dart:convert'; // Para jsonEncode
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http; // Para chamadas HTTP
 // Importe suas classes:
-import 'package:flutter_docig_venda/services/database_helper.dart'; // Seu DatabaseHelper
-import 'package:flutter_docig_venda/models/registrar_pedido_local.dart'; // Seu modelo RegistroPedidoLocal
+import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart'; // Seu DatabaseHelper
+import 'package:flutter_docig_venda/data/models/registrar_pedido_local.dart'; // Seu modelo RegistroPedidoLocal
 import 'package:flutter_docig_venda/services/dao/pedidosParaEnvioDao.dart'; // O DAO que criamos
 import 'package:logger/logger.dart'; // Ou sua instância de logger
 

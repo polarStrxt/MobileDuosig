@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/widgets/infoCliente.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/presentation/widgets/infoCliente.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 
 class ClientePerfil extends StatelessWidget {
   final Cliente cliente;

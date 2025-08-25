@@ -1,5 +1,5 @@
 import 'package:sqflite/sqflite.dart';
-import 'package:flutter_docig_venda/services/database_helper.dart';
+import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart';
 
 abstract class BaseDao<T> {
   final String tableName;

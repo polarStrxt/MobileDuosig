@@ -1,5 +1,5 @@
 // lib/services/produto_service.dart
-import 'package:flutter_docig_venda/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
 import 'package:flutter_docig_venda/services/api_client.dart'; // Certifique-se que este caminho está correto
 import 'package:logger/logger.dart';
 // Se ApiClient não importar 'package:http/http.dart' as http, adicione se precisar de tipos como http.Response aqui.

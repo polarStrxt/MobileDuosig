@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_docig_venda/screens/carrinhoaberto.dart';
+import 'package:flutter_docig_venda/presentation/screens/carrinhoaberto.dart';
 
 /// A custom drawer widget providing application navigation and system actions.
 ///

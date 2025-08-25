@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
 import 'package:flutter_docig_venda/services/cliente_repository.dart'; // Importação correta
 import 'package:logger/logger.dart';
-import 'package:flutter_docig_venda/screens/carrinhoScreen.dart'; // Nome do arquivo corrigido
+import 'package:flutter_docig_venda/presentation/screens/carrinhoScreen.dart'; // Nome do arquivo corrigido
 import 'package:provider/provider.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart';
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/api_client.dart'; // Para ApiResult
 
 class ClientesComCarrinhoScreen extends StatefulWidget {

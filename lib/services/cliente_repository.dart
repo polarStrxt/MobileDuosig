@@ -1,5 +1,5 @@
 // lib/repositories/cliente_repository.dart
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/dao/cliente_dao.dart';
 import 'package:flutter/material.dart'; // Para debugPrint
 

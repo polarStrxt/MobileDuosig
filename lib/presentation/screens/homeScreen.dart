@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/widgets/perfilCriente.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/presentation/widgets/perfilCriente.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/dao/cliente_dao.dart';
-import 'package:flutter_docig_venda/widgets/app_drawer.dart';
+import 'package:flutter_docig_venda/presentation/widgets/app_drawer.dart';
 import 'package:flutter_docig_venda/services/Sincronizacao.dart';
 import 'package:flutter_docig_venda/services/dao/pedidosParaEnvioDao.dart';
-import 'package:flutter_docig_venda/models/registrar_pedido_local.dart';
-import 'package:flutter_docig_venda/services/database_helper.dart';
+import 'package:flutter_docig_venda/data/models/registrar_pedido_local.dart';
+import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart';
 import 'package:logger/logger.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';

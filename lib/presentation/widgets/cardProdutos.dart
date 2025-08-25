@@ -2,8 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart'; // Necessário para Provider.of
-import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Seu ChangeNotifier
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Seu ChangeNotifier
 
 // Constantes de cor, se usadas apenas aqui, podem ficar aqui.
 // Se usadas globalmente, defina em um arquivo de tema ou constantes.

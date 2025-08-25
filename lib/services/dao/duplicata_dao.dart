@@ -1,6 +1,6 @@
 import 'package:flutter_docig_venda/services/apiduplicata.dart'; // Versão padronizada
-import 'package:flutter_docig_venda/models/duplicata_model.dart';
-import 'package:flutter_docig_venda/widgets/dao_generico.dart';
+import 'package:flutter_docig_venda/data/models/duplicata_model.dart';
+import 'package:flutter_docig_venda/presentation/widgets/dao_generico.dart';
 import 'package:flutter_docig_venda/services/api_client.dart'; // Para usar ApiResult
 import 'package:flutter/foundation.dart' show kDebugMode;
 

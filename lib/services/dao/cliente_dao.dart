@@ -1,5 +1,5 @@
-import 'package:flutter_docig_venda/widgets/dao_generico.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/presentation/widgets/dao_generico.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 
 class ClienteDao extends BaseDao<Cliente> {
   ClienteDao() : super('clientes');

@@ -1,12 +1,12 @@
 // lib/services/carrinho_service.dart (Renomeie o arquivo no seu projeto)
-import 'package:flutter_docig_venda/models/carrinho_model.dart';
-import 'package:flutter_docig_venda/models/carrinho_item_model.dart';
-import 'package:flutter_docig_venda/models/produto_model.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/carrinho_model.dart';
+import 'package:flutter_docig_venda/data/models/carrinho_item_model.dart';
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
 import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart'; // Nome de arquivo corrigido
 import 'package:flutter_docig_venda/services/dao/itemcarrinhoDao.dart'; // Nome de arquivo corrigido
 import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
-import 'package:flutter_docig_venda/widgets/carrinho.dart'; // Corrija o caminho para sua classe Carrinho (ChangeNotifier)
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Corrija o caminho para sua classe Carrinho (ChangeNotifier)
 import 'package:flutter_docig_venda/services/api_client.dart'; // Corrija o caminho para ApiResult
 import 'package:logger/logger.dart';
 // Removido: import 'package:flutter_docig_venda/services/database_helper.dart'; (não usado diretamente)

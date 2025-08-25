@@ -1,6 +1,6 @@
 // lib/widgets/carrinho.dart
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/models/produto_model.dart';
+import 'package:flutter_docig_venda/data/models/produto_model.dart';
 
 class Carrinho extends ChangeNotifier {
   final Map<ProdutoModel, int> _itens = {};

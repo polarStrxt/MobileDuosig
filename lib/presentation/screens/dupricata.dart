@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_docig_venda/models/cliente_model.dart';
-import 'package:flutter_docig_venda/models/duplicata_model.dart';
+import 'package:flutter_docig_venda/data/models/cliente_model.dart';
+import 'package:flutter_docig_venda/data/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/services/dao/duplicata_dao.dart';
 
 class DuplicataScreen extends StatefulWidget {
