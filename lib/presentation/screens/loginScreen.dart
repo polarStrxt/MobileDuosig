@@ -16,9 +16,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // Credenciais válidas
   static const List<String> _loginCredentials = [
-    'tone:123',
-    'erick:erick124',
-    'victor:senha',
+    'vendedor1:123',
+    'vendedor2:123',
+    'vendedor3:123',
+    'vendedor4:123',
     'adm:adm'
   ];
 

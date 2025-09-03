@@ -4,7 +4,7 @@ import 'package:logger/logger.dart';
 
 class DatabaseHelper {
   static const String _databaseName = "docig_venda.db";
-  static const int _databaseVersion = 1; // Reiniciando para nova estrutura
+  static const int _databaseVersion = 9; // Incrementado para aplicar correções
   
   // --- Constantes com Nomes de Tabelas ---
   static const String tableCondicaoPagamento = 'condicao_pagamento';
@@ -34,464 +34,604 @@ class DatabaseHelper {
 
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), _databaseName);
-    _logger.i("Abrindo banco de dados em: $path");
+    _logger.i("Inicializando banco com estrutura da API em: $path");
+    
     return await openDatabase(
       path,
       version: _databaseVersion,
-      onConfigure: _onConfigure,
+      onOpen: _onOpen,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      onDowngrade: onDatabaseDowngradeDelete,
     );
   }
 
-  Future<void> _onConfigure(Database db) async {
-    _logger.i("Configurando banco de dados...");
-    // Habilitar chaves estrangeiras
-    await db.execute('PRAGMA foreign_keys = ON');
-    // Otimizações de performance
-    await db.execute('PRAGMA journal_mode = WAL');
-    await db.execute('PRAGMA synchronous = NORMAL');
-    await db.execute('PRAGMA cache_size = 10000');
-    await db.execute('PRAGMA temp_store = MEMORY');
+  Future<void> _onOpen(Database db) async {
+    _logger.i("Configurando banco para compatibilidade com API...");
+    
+    try {
+      await db.execute('PRAGMA foreign_keys = OFF;');
+      await db.execute('PRAGMA ignore_check_constraints = ON;');
+      await db.execute('PRAGMA synchronous = OFF;');
+      await db.rawQuery('PRAGMA journal_mode = MEMORY;');
+      await db.execute('PRAGMA temp_store = MEMORY;');
+      
+      _logger.i("Banco configurado para aceitar dados da API");
+      
+    } catch (e) {
+      _logger.w("Erro na configuração, mas continuando: $e");
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    _logger.i("Criando banco de dados versão $version...");
+    _logger.i("Criando todas as tabelas com estrutura da API...");
     
-    var batch = db.batch();
+    // Tabelas da API com estrutura exata
+    await _createProdutosTable(db);
+    await _createClientesTable(db);
+    await _createDuplicataTable(db);
+    await _createCondicaoPagamentoTable(db);
+    await _createClienteProdutoTable(db);
     
-    // ORDEM IMPORTANTE: Tabelas sem FK primeiro
-    _createConfigTable(batch);
-    _createCondicaoPagamentoTable(batch);
-    _createProdutosTable(batch);
-    _createClienteProdutoTable(batch);
+    // Tabelas locais do app
+    await _createConfigTable(db);
+    await _createCarrinhosTable(db);
+    await _createCarrinhoItensTable(db);
+    await _createPedidosTable(db);
+    await _createPedidoItensTable(db);
+    await _createPedidosParaEnvioTable(db);
+    await _createSincronizacaoTable(db);
     
-    // Tabelas com FK depois
-    _createClientesTable(batch);
-    _createDuplicataTable(batch);
-    _createCarrinhosTable(batch);
-    _createCarrinhoItensTable(batch);
-    _createPedidosTable(batch);
-    _createPedidoItensTable(batch);
-    _createPedidosParaEnvioTable(batch);
-    _createSincronizacaoTable(batch);
+    await _createIndexes(db);
     
-    
-    // Criar todos os índices
-    _createIndexes(batch);
-    
-    await batch.commit(noResult: true, continueOnError: false);
-    _logger.i("Banco de dados criado com sucesso.");
+    _logger.i("Todas as tabelas criadas com estrutura correta");
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    _logger.w("Atualizando banco de dados da versão $oldVersion para $newVersion...");
+    _logger.i("Atualizando banco de versão $oldVersion para $newVersion");
     
-    // Implementar migrações incrementais
-    for (int version = oldVersion + 1; version <= newVersion; version++) {
-      await _runMigration(db, version);
+    // Para simplificar, recria tudo
+    await _dropAllTables(db);
+    await _onCreate(db, newVersion);
+  }
+
+  Future<void> _dropAllTables(Database db) async {
+    await db.execute('DROP TABLE IF EXISTS $tableProdutos');
+    await db.execute('DROP TABLE IF EXISTS $tableClientes');
+    await db.execute('DROP TABLE IF EXISTS $tableDuplicata');
+    await db.execute('DROP TABLE IF EXISTS $tableCondicaoPagamento');
+    await db.execute('DROP TABLE IF EXISTS $tableClienteProduto');
+    await db.execute('DROP TABLE IF EXISTS $tableConfig');
+    await db.execute('DROP TABLE IF EXISTS $tableCarrinhos');
+    await db.execute('DROP TABLE IF EXISTS $tableCarrinhoItens');
+    await db.execute('DROP TABLE IF EXISTS $tablePedidos');
+    await db.execute('DROP TABLE IF EXISTS $tablePedidoItens');
+    await db.execute('DROP TABLE IF EXISTS $tablePedidosParaEnvio');
+    await db.execute('DROP TABLE IF EXISTS $tableSincronizacao');
+  }
+
+  // ============= TABELAS DA API COM ESTRUTURA EXATA =============
+
+  /// Tabela PRODUTOS - Estrutura IDÊNTICA ao ProdutoModel
+  Future<void> _createProdutosTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableProdutos (
+        codprd INTEGER PRIMARY KEY NOT NULL,
+        staati TEXT NOT NULL,
+        dcrprd TEXT NOT NULL,
+        qtdmulvda INTEGER NOT NULL,
+        nommrc TEXT NOT NULL,
+        vlrbasvda REAL NOT NULL,
+        qtdetq INTEGER NOT NULL,
+        vlrpmcprd REAL NOT NULL,
+        dtaini TEXT,
+        dtafin TEXT,
+        vlrtab1 REAL NOT NULL,
+        vlrtab2 REAL NOT NULL,
+        peracrdsc1 REAL,
+        peracrdsc2 REAL,
+        codundprd TEXT NOT NULL,
+        vol INTEGER NOT NULL,
+        qtdvol INTEGER NOT NULL,
+        perdscmxm REAL NOT NULL
+      );
+    ''');
+    _logger.d("Tabela $tableProdutos criada (estrutura IDÊNTICA ao ProdutoModel)");
+  }
+
+  /// Tabela CLIENTES - Estrutura exata da API
+  Future<void> _createClientesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableClientes (
+        codcli INTEGER PRIMARY KEY,
+        nomcli TEXT,
+        cgccpfcli TEXT,
+        ufdcli TEXT,
+        endcli TEXT,
+        baicli TEXT,
+        muncli TEXT,
+        numtel001 TEXT,
+        numtel002 TEXT,
+        nomfnt TEXT,
+        emailcli TEXT,
+        vlrlimcrd REAL,
+        codtab INTEGER,
+        codcndpgt INTEGER,
+        vlrsldlimcrd REAL,
+        vlrdplabe REAL,
+        vlrdplats REAL,
+        staati TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableClientes criada (estrutura exata da API)");
+  }
+
+  /// Tabela DUPLICATA - 4 campos exatos da API
+  Future<void> _createDuplicataTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableDuplicata (
+        numdoc TEXT,
+        codcli INTEGER,
+        dtavct TEXT,
+        vlrdpl REAL
+      );
+    ''');
+    _logger.d("Tabela $tableDuplicata criada (4 campos exatos da API)");
+  }
+
+  /// Tabela CONDIÇÃO PAGAMENTO - Para quando tivermos os dados da API
+  Future<void> _createCondicaoPagamentoTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableCondicaoPagamento (
+        codcndpgt INTEGER PRIMARY KEY,
+        dcrcndpgt TEXT,
+        qtd_parcelas INTEGER,
+        dias_vencimento TEXT,
+        perdsccel REAL,
+        staati TEXT,
+        tipo_pagamento TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableCondicaoPagamento criada");
+  }
+
+  /// Tabela CLIENTE-PRODUTO - Relação simples
+  Future<void> _createClienteProdutoTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableClienteProduto (
+        codcli INTEGER,
+        codprd INTEGER
+      );
+    ''');
+    _logger.d("Tabela $tableClienteProduto criada");
+  }
+
+  // ============= TABELAS LOCAIS DO APP =============
+
+  Future<void> _createConfigTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableConfig (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cod_vendedor TEXT,
+        nome_vendedor TEXT,
+        endereco_api TEXT,
+        usuario_duosig TEXT,
+        usuario TEXT,
+        senha TEXT,
+        token_api TEXT,
+        ultimo_sync TEXT,
+        versao_app TEXT,
+        dispositivo_id TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableConfig criada");
+  }
+
+  Future<void> _createCarrinhosTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableCarrinhos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codcli INTEGER,
+        data_criacao TEXT,
+        data_ultima_modificacao TEXT,
+        status TEXT,
+        valor_total_bruto REAL,
+        valor_total_descontos REAL,
+        valor_total_liquido REAL,
+        observacoes TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableCarrinhos criada");
+  }
+
+  Future<void> _createCarrinhoItensTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableCarrinhoItens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_carrinho INTEGER,
+        codprd INTEGER,
+        quantidade INTEGER,
+        preco_unitario_registrado REAL,
+        desconto_item REAL,
+        data_adicao TEXT,
+        observacoes TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableCarrinhoItens criada");
+  }
+
+  Future<void> _createPedidosTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tablePedidos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo_pedido_app TEXT,
+        numero_pedido_erp TEXT,
+        codcli INTEGER,
+        codven TEXT,
+        codcndpgt INTEGER,
+        tabela_preco INTEGER,
+        data_pedido TEXT,
+        data_entrega TEXT,
+        status TEXT,
+        tipo_pedido TEXT,
+        valor_total_bruto REAL,
+        valor_total_descontos REAL,
+        valor_frete REAL,
+        valor_total_liquido REAL,
+        observacoes TEXT,
+        observacoes_internas TEXT,
+        motivo_cancelamento TEXT,
+        latitude REAL,
+        longitude REAL,
+        endereco_entrega TEXT,
+        dispositivo_id TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        synchronized_at TEXT
+      );
+    ''');
+    _logger.d("Tabela $tablePedidos criada");
+  }
+
+  Future<void> _createPedidoItensTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tablePedidoItens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id_pedido INTEGER,
+        codprd INTEGER,
+        sequencia INTEGER,
+        quantidade REAL,
+        preco_tabela REAL,
+        preco_unitario REAL,
+        desconto_percentual REAL,
+        desconto_valor REAL,
+        valor_total_item REAL,
+        observacoes TEXT
+      );
+    ''');
+    _logger.d("Tabela $tablePedidoItens criada");
+  }
+
+  Future<void> _createPedidosParaEnvioTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tablePedidosParaEnvio (
+        id_pedido_local INTEGER PRIMARY KEY,
+        codigo_pedido_app TEXT,
+        json_pedido TEXT,
+        status_envio TEXT,
+        tentativas INTEGER,
+        ultima_tentativa TEXT,
+        erro_mensagem TEXT,
+        prioridade INTEGER,
+        data_criacao TEXT,
+        data_ultima_tentativa TEXT
+      );
+    ''');
+    _logger.d("Tabela $tablePedidosParaEnvio criada");
+  }
+
+  Future<void> _createSincronizacaoTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE $tableSincronizacao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tabela TEXT,
+        tipo_sync TEXT,
+        status TEXT,
+        registros_total INTEGER,
+        registros_sincronizados INTEGER,
+        data_inicio TEXT,
+        data_fim TEXT,
+        erro_mensagem TEXT,
+        dispositivo_id TEXT
+      );
+    ''');
+    _logger.d("Tabela $tableSincronizacao criada");
+  }
+
+  Future<void> _createIndexes(Database db) async {
+    try {
+      // Índices das tabelas da API
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_produtos_codprd ON $tableProdutos(codprd);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_clientes_codcli ON $tableClientes(codcli);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_duplicata_codcli ON $tableDuplicata(codcli);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_condicao_codcndpgt ON $tableCondicaoPagamento(codcndpgt);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_cliente_produto_codcli ON $tableClienteProduto(codcli);');
+      
+      // Índices das tabelas locais
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_carrinhos_codcli ON $tableCarrinhos(codcli);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_carrinho_itens_carrinho ON $tableCarrinhoItens(id_carrinho);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_codcli ON $tablePedidos(codcli);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedido_itens_pedido ON $tablePedidoItens(id_pedido);');
+      
+      _logger.d("Índices criados");
+    } catch (e) {
+      _logger.w("Alguns índices falharam: $e");
     }
+  }
+
+  // ============= MÉTODOS DE INSERÇÃO PARA API =============
+
+  /// Inserir produtos da API em lote - MÉTODO ATUALIZADO
+  Future<int> inserirProdutosDaAPI(List<Map<String, dynamic>> produtos) async {
+    final db = await database;
+    int inseridos = 0;
     
-    _logger.i("Atualização do banco de dados concluída.");
-  }
-
-  Future<void> _runMigration(Database db, int version) async {
-    switch (version) {
-      case 2:
-        // Exemplo de migração futura
-        // await db.execute('ALTER TABLE produtos ADD COLUMN novo_campo TEXT');
-        break;
-      default:
-        _logger.w("Nenhuma migração definida para versão $version");
-    }
-  }
-
-  // ============= CRIAÇÃO DE TABELAS =============
-
-  void _createConfigTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableConfig (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      cod_vendedor TEXT NOT NULL,
-      nome_vendedor TEXT,
-      endereco_api TEXT NOT NULL,
-      usuario_duosig TEXT NOT NULL,
-      usuario TEXT NOT NULL UNIQUE,
-      senha TEXT NOT NULL,
-      token_api TEXT,
-      ultimo_sync INTEGER,
-      versao_app TEXT,
-      dispositivo_id TEXT,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-    );
-    ''');
-    _logger.d("Tabela $tableConfig criada.");
-  }
-
-  void _createCondicaoPagamentoTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableCondicaoPagamento (
-      codcndpgt INTEGER PRIMARY KEY,
-      dcrcndpgt TEXT NOT NULL,
-      qtd_parcelas INTEGER NOT NULL DEFAULT 1,
-      dias_vencimento TEXT, -- JSON array [30, 60, 90]
-      perdsccel REAL NOT NULL DEFAULT 0 CHECK (perdsccel >= 0 AND perdsccel <= 100),
-      staati TEXT NOT NULL DEFAULT 'A' CHECK (staati IN ('A', 'I')),
-      tipo_pagamento TEXT CHECK (tipo_pagamento IN ('DINHEIRO', 'CARTAO', 'BOLETO', 'PIX', 'CHEQUE')),
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-    );
-    ''');
-    _logger.d("Tabela $tableCondicaoPagamento criada.");
-  }
-
-  void _createProdutosTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableProdutos (
-      codprd INTEGER PRIMARY KEY,
-      staati TEXT NOT NULL DEFAULT 'A' CHECK (staati IN ('A', 'I')),
-      dcrprd TEXT NOT NULL,
-      codigo_barras TEXT UNIQUE,
-      qtdmulvda INTEGER NOT NULL DEFAULT 1 CHECK (qtdmulvda > 0),
-      nommrc TEXT,
-      categoria TEXT,
-      subcategoria TEXT,
-      vlrbasvda REAL NOT NULL CHECK (vlrbasvda >= 0),
-      qtdetq INTEGER NOT NULL DEFAULT 0 CHECK (qtdetq >= 0),
-      qtd_reservada INTEGER NOT NULL DEFAULT 0 CHECK (qtd_reservada >= 0),
-      vlrpmcprd REAL NOT NULL DEFAULT 0 CHECK (vlrpmcprd >= 0),
-      dtaini INTEGER, -- Timestamp início promoção
-      dtafin INTEGER, -- Timestamp fim promoção
-      vlrtab1 REAL NOT NULL DEFAULT 0 CHECK (vlrtab1 >= 0),
-      vlrtab2 REAL NOT NULL DEFAULT 0 CHECK (vlrtab2 >= 0),
-      peracrdsc1 REAL NOT NULL DEFAULT 0 CHECK (peracrdsc1 >= 0 AND peracrdsc1 <= 100),
-      peracrdsc2 REAL NOT NULL DEFAULT 0 CHECK (peracrdsc2 >= 0 AND peracrdsc2 <= 100),
-      codundprd TEXT NOT NULL DEFAULT 'UN',
-      vol INTEGER NOT NULL DEFAULT 1,
-      qtdvol INTEGER NOT NULL DEFAULT 1,
-      perdscmxm REAL NOT NULL DEFAULT 0 CHECK (perdscmxm >= 0 AND perdscmxm <= 100),
-      url_imagem TEXT,
-      observacoes TEXT,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-    );
-    ''');
-    _logger.d("Tabela $tableProdutos criada.");
-  }
-
-  void _createClientesTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableClientes (
-      codcli INTEGER PRIMARY KEY,
-      nomcli TEXT NOT NULL,
-      tipo_pessoa TEXT NOT NULL DEFAULT 'F' CHECK (tipo_pessoa IN ('F', 'J')),
-      cgccpfcli TEXT NOT NULL UNIQUE,
-      inscricao_estadual TEXT,
-      ufdcli TEXT NOT NULL CHECK (length(ufdcli) = 2),
-      cep TEXT,
-      endcli TEXT NOT NULL,
-      numero_endereco TEXT,
-      complemento TEXT,
-      baicli TEXT NOT NULL,
-      muncli TEXT NOT NULL,
-      numtel001 TEXT NOT NULL,
-      numtel002 TEXT,
-      whatsapp TEXT,
-      nomfnt TEXT,
-      emailcli TEXT,
-      vlrlimcrd REAL NOT NULL DEFAULT 0 CHECK (vlrlimcrd >= 0),
-      codtab INTEGER NOT NULL DEFAULT 1,
-      codcndpgt INTEGER NOT NULL,
-      vlrsldlimcrd REAL NOT NULL DEFAULT 0,
-      vlrdplabe REAL NOT NULL DEFAULT 0 CHECK (vlrdplabe >= 0),
-      vlrdplats REAL NOT NULL DEFAULT 0 CHECK (vlrdplats >= 0),
-      data_ultimo_pedido INTEGER,
-      observacoes TEXT,
-      staati TEXT NOT NULL DEFAULT 'A' CHECK (staati IN ('A', 'I', 'B')), -- B=Bloqueado
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      FOREIGN KEY (codcndpgt) REFERENCES $tableCondicaoPagamento(codcndpgt) ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tableClientes criada.");
-  }
-
-  void _createDuplicataTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableDuplicata (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      numdoc TEXT NOT NULL UNIQUE,
-      codcli INTEGER NOT NULL,
-      codped INTEGER,
-      parcela INTEGER NOT NULL DEFAULT 1,
-      total_parcelas INTEGER NOT NULL DEFAULT 1,
-      dtaemi INTEGER NOT NULL,
-      dtavct INTEGER NOT NULL,
-      vlrdpl REAL NOT NULL CHECK (vlrdpl > 0),
-      vlrpag REAL DEFAULT 0 CHECK (vlrpag >= 0),
-      dtapag INTEGER,
-      status TEXT NOT NULL DEFAULT 'ABERTO' CHECK (status IN ('ABERTO', 'PAGO', 'PARCIAL', 'CANCELADO', 'VENCIDO')),
-      tipo_documento TEXT CHECK (tipo_documento IN ('BOLETO', 'DUPLICATA', 'PROMISSORIA', 'CHEQUE')),
-      observacoes TEXT,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      FOREIGN KEY (codcli) REFERENCES $tableClientes(codcli) ON DELETE RESTRICT ON UPDATE CASCADE,
-      FOREIGN KEY (codped) REFERENCES $tablePedidos(id) ON DELETE SET NULL ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tableDuplicata criada.");
-  }
-
-  void _createCarrinhosTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableCarrinhos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      codcli INTEGER NOT NULL,
-      codcndpgt INTEGER,
-      tabela_preco INTEGER NOT NULL DEFAULT 1,
-      data_criacao INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      data_ultima_modificacao INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      status TEXT NOT NULL DEFAULT 'ABERTO' CHECK (status IN ('ABERTO', 'FINALIZADO', 'CANCELADO', 'CONVERTIDO')),
-      cupom_desconto TEXT,
-      valor_cupom_desconto REAL DEFAULT 0,
-      valor_total_bruto REAL NOT NULL DEFAULT 0 CHECK (valor_total_bruto >= 0),
-      valor_total_descontos REAL NOT NULL DEFAULT 0 CHECK (valor_total_descontos >= 0),
-      valor_total_liquido REAL NOT NULL DEFAULT 0 CHECK (valor_total_liquido >= 0),
-      observacoes TEXT,
-      dispositivo_id TEXT,
-      FOREIGN KEY (codcli) REFERENCES $tableClientes(codcli) ON DELETE RESTRICT ON UPDATE CASCADE,
-      FOREIGN KEY (codcndpgt) REFERENCES $tableCondicaoPagamento(codcndpgt) ON DELETE SET NULL ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tableCarrinhos criada.");
-  }
-
-  void _createCarrinhoItensTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableCarrinhoItens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_carrinho INTEGER NOT NULL,
-      codprd INTEGER NOT NULL,
-      quantidade REAL NOT NULL CHECK (quantidade > 0),
-      preco_tabela REAL NOT NULL CHECK (preco_tabela >= 0),
-      preco_unitario REAL NOT NULL CHECK (preco_unitario >= 0),
-      desconto_percentual REAL NOT NULL DEFAULT 0 CHECK (desconto_percentual >= 0 AND desconto_percentual <= 100),
-      desconto_valor REAL NOT NULL DEFAULT 0 CHECK (desconto_valor >= 0),
-      valor_total_item REAL NOT NULL CHECK (valor_total_item >= 0),
-      observacoes TEXT,
-      data_adicao INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      data_modificacao INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      FOREIGN KEY (id_carrinho) REFERENCES $tableCarrinhos(id) ON DELETE CASCADE ON UPDATE CASCADE,
-      FOREIGN KEY (codprd) REFERENCES $tableProdutos(codprd) ON DELETE RESTRICT ON UPDATE CASCADE,
-      UNIQUE(id_carrinho, codprd)
-    );
-    ''');
-    _logger.d("Tabela $tableCarrinhoItens criada.");
-  }
-
-  void _createPedidosTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tablePedidos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      codigo_pedido_app TEXT NOT NULL UNIQUE,
-      numero_pedido_erp TEXT,
-      codcli INTEGER NOT NULL,
-      codven TEXT NOT NULL,
-      codcndpgt INTEGER NOT NULL,
-      tabela_preco INTEGER NOT NULL DEFAULT 1,
-      data_pedido INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      data_entrega INTEGER,
-      status TEXT NOT NULL DEFAULT 'PENDENTE' CHECK (status IN ('PENDENTE', 'ENVIADO', 'CONFIRMADO', 'FATURADO', 'CANCELADO', 'ERRO')),
-      tipo_pedido TEXT NOT NULL DEFAULT 'VENDA' CHECK (tipo_pedido IN ('VENDA', 'ORCAMENTO', 'CONSIGNACAO')),
-      valor_total_bruto REAL NOT NULL CHECK (valor_total_bruto >= 0),
-      valor_total_descontos REAL NOT NULL CHECK (valor_total_descontos >= 0),
-      valor_frete REAL DEFAULT 0 CHECK (valor_frete >= 0),
-      valor_total_liquido REAL NOT NULL CHECK (valor_total_liquido >= 0),
-      observacoes TEXT,
-      observacoes_internas TEXT,
-      motivo_cancelamento TEXT,
-      latitude REAL,
-      longitude REAL,
-      endereco_entrega TEXT,
-      dispositivo_id TEXT,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      synchronized_at INTEGER,
-      FOREIGN KEY (codcli) REFERENCES $tableClientes(codcli) ON DELETE RESTRICT ON UPDATE CASCADE,
-      FOREIGN KEY (codcndpgt) REFERENCES $tableCondicaoPagamento(codcndpgt) ON DELETE RESTRICT ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tablePedidos criada.");
-  }
-
-  void _createPedidoItensTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tablePedidoItens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_pedido INTEGER NOT NULL,
-      codprd INTEGER NOT NULL,
-      sequencia INTEGER NOT NULL,
-      quantidade REAL NOT NULL CHECK (quantidade > 0),
-      preco_tabela REAL NOT NULL CHECK (preco_tabela >= 0),
-      preco_unitario REAL NOT NULL CHECK (preco_unitario >= 0),
-      desconto_percentual REAL NOT NULL DEFAULT 0 CHECK (desconto_percentual >= 0 AND desconto_percentual <= 100),
-      desconto_valor REAL NOT NULL DEFAULT 0 CHECK (desconto_valor >= 0),
-      valor_total_item REAL NOT NULL CHECK (valor_total_item >= 0),
-      observacoes TEXT,
-      FOREIGN KEY (id_pedido) REFERENCES $tablePedidos(id) ON DELETE CASCADE ON UPDATE CASCADE,
-      FOREIGN KEY (codprd) REFERENCES $tableProdutos(codprd) ON DELETE RESTRICT ON UPDATE CASCADE,
-      UNIQUE(id_pedido, sequencia)
-    );
-    ''');
-    _logger.d("Tabela $tablePedidoItens criada.");
-  }
-
-  void _createPedidosParaEnvioTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tablePedidosParaEnvio (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      id_pedido INTEGER NOT NULL,
-      codigo_pedido_app TEXT NOT NULL,
-      json_pedido TEXT NOT NULL,
-      status_envio TEXT NOT NULL DEFAULT 'PENDENTE' CHECK (status_envio IN ('PENDENTE', 'ENVIANDO', 'ENVIADO', 'ERRO', 'CANCELADO')),
-      tentativas INTEGER NOT NULL DEFAULT 0,
-      ultima_tentativa INTEGER,
-      erro_mensagem TEXT,
-      prioridade INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      FOREIGN KEY (id_pedido) REFERENCES $tablePedidos(id) ON DELETE CASCADE ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tablePedidosParaEnvio criada.");
-  }
-
-  void _createSincronizacaoTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableSincronizacao (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tabela TEXT NOT NULL,
-      tipo_sync TEXT NOT NULL CHECK (tipo_sync IN ('COMPLETA', 'INCREMENTAL', 'UPLOAD', 'DOWNLOAD')),
-      status TEXT NOT NULL CHECK (status IN ('INICIADO', 'SUCESSO', 'ERRO', 'PARCIAL')),
-      registros_total INTEGER DEFAULT 0,
-      registros_sincronizados INTEGER DEFAULT 0,
-      data_inicio INTEGER NOT NULL,
-      data_fim INTEGER,
-      erro_mensagem TEXT,
-      dispositivo_id TEXT
-    );
-    ''');
-    _logger.d("Tabela $tableSincronizacao criada.");
-  }
-
-  void _createClienteProdutoTable(Batch batch) {
-    batch.execute('''
-    CREATE TABLE $tableClienteProduto (
-      codcli INTEGER NOT NULL,
-      codprd INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      PRIMARY KEY (codcli, codprd),
-      FOREIGN KEY (codcli) REFERENCES clientes(codcli) ON DELETE CASCADE ON UPDATE CASCADE,
-      FOREIGN KEY (codprd) REFERENCES produtos(codprd) ON DELETE CASCADE ON UPDATE CASCADE
-    );
-    ''');
-    _logger.d("Tabela $tableClienteProduto criada.");
-  }
-
-  // ============= CRIAÇÃO DE ÍNDICES =============
-  
-  void _createIndexes(Batch batch) {
-    // Índices para Clientes
-    batch.execute('CREATE INDEX idx_clientes_cgccpf ON $tableClientes(cgccpfcli);');
-    batch.execute('CREATE INDEX idx_clientes_nome ON $tableClientes(nomcli);');
-    batch.execute('CREATE INDEX idx_clientes_status ON $tableClientes(staati);');
-    batch.execute('CREATE INDEX idx_clientes_municipio ON $tableClientes(muncli);');
+    await db.transaction((txn) async {
+      await txn.delete(tableProdutos);
+      
+      for (final produto in produtos) {
+        try {
+          // Preparar dados com conversão adequada de tipos
+          final Map<String, dynamic> dadosParaInserir = {
+            'codprd': produto['codprd'] ?? 0,
+            'staati': produto['staati'] ?? '',
+            'dcrprd': produto['dcrprd'] ?? '',
+            'qtdmulvda': produto['qtdmulvda'] ?? 0,
+            'nommrc': produto['nommrc'] ?? '',
+            'vlrbasvda': _toDouble(produto['vlrbasvda']) ?? 0.0,
+            'qtdetq': produto['qtdetq'] ?? 0,
+            'vlrpmcprd': _toDouble(produto['vlrpmcprd']) ?? 0.0,
+            'dtaini': produto['dtaini'], // Pode ser null
+            'dtafin': produto['dtafin'], // Pode ser null
+            'vlrtab1': _toDouble(produto['vlrtab1']) ?? 0.0,
+            'vlrtab2': _toDouble(produto['vlrtab2']) ?? 0.0,
+            'peracrdsc1': _toDouble(produto['peracrdsc1']), // Pode ser null
+            'peracrdsc2': _toDouble(produto['peracrdsc2']), // Pode ser null
+            'codundprd': produto['codundprd'] ?? '',
+            'vol': produto['vol'] ?? 0,
+            'qtdvol': produto['qtdvol'] ?? 0,
+            'perdscmxm': _toDouble(produto['perdscmxm']) ?? 0.0,
+          };
+          
+          await txn.insert(tableProdutos, dadosParaInserir);
+          inseridos++;
+        } catch (e) {
+          _logger.w("Erro ao inserir produto ${produto['codprd']}: $e");
+        }
+      }
+    });
     
-    // Índices para Produtos
-    batch.execute('CREATE INDEX idx_produtos_descricao ON $tableProdutos(dcrprd);');
-    batch.execute('CREATE INDEX idx_produtos_codigo_barras ON $tableProdutos(codigo_barras);');
-    batch.execute('CREATE INDEX idx_produtos_marca ON $tableProdutos(nommrc);');
-    batch.execute('CREATE INDEX idx_produtos_status ON $tableProdutos(staati);');
-    batch.execute('CREATE INDEX idx_produtos_categoria ON $tableProdutos(categoria);');
-    
-    // Índices para Duplicatas
-    batch.execute('CREATE INDEX idx_duplicata_cliente ON $tableDuplicata(codcli);');
-    batch.execute('CREATE INDEX idx_duplicata_vencimento ON $tableDuplicata(dtavct);');
-    batch.execute('CREATE INDEX idx_duplicata_status ON $tableDuplicata(status);');
-    batch.execute('CREATE INDEX idx_duplicata_pedido ON $tableDuplicata(codped);');
-    
-    // Índices para Carrinhos
-    batch.execute('CREATE INDEX idx_carrinhos_cliente_status ON $tableCarrinhos(codcli, status);');
-    batch.execute('CREATE INDEX idx_carrinhos_data ON $tableCarrinhos(data_ultima_modificacao);');
-    
-    // Índices para Carrinho Itens
-    batch.execute('CREATE INDEX idx_carrinho_itens_carrinho ON $tableCarrinhoItens(id_carrinho);');
-    batch.execute('CREATE INDEX idx_carrinho_itens_produto ON $tableCarrinhoItens(codprd);');
-    
-    // Índices para Pedidos
-    batch.execute('CREATE INDEX idx_pedidos_cliente ON $tablePedidos(codcli);');
-    batch.execute('CREATE INDEX idx_pedidos_status ON $tablePedidos(status);');
-    batch.execute('CREATE INDEX idx_pedidos_data ON $tablePedidos(data_pedido);');
-    batch.execute('CREATE INDEX idx_pedidos_codigo_app ON $tablePedidos(codigo_pedido_app);');
-    batch.execute('CREATE INDEX idx_pedidos_numero_erp ON $tablePedidos(numero_pedido_erp);');
-    
-    // Índices para Pedido Itens
-    batch.execute('CREATE INDEX idx_pedido_itens_pedido ON $tablePedidoItens(id_pedido);');
-    batch.execute('CREATE INDEX idx_pedido_itens_produto ON $tablePedidoItens(codprd);');
-    
-    // Índices para Pedidos Para Envio
-    batch.execute('CREATE INDEX idx_pedidos_envio_status ON $tablePedidosParaEnvio(status_envio, prioridade);');
-    batch.execute('CREATE INDEX idx_pedidos_envio_pedido ON $tablePedidosParaEnvio(id_pedido);');
-    
-    // Índices para Sincronização
-    batch.execute('CREATE INDEX idx_sync_tabela_status ON $tableSincronizacao(tabela, status);');
-    batch.execute('CREATE INDEX idx_sync_data ON $tableSincronizacao(data_inicio DESC);');
+    _logger.i("Produtos da API inseridos: $inseridos de ${produtos.length}");
+    return inseridos;
+  }
 
-    // Índices para Cliente Produto
-    batch.execute('CREATE INDEX idx_cliente_produto_cliente ON $tableClienteProduto(codcli);');
-    batch.execute('CREATE INDEX idx_cliente_produto_produto ON $tableClienteProduto(codprd);');
+  /// Inserir clientes da API em lote
+  Future<int> inserirClientesDaAPI(List<Map<String, dynamic>> clientes) async {
+    final db = await database;
+    int inseridos = 0;
     
-    _logger.d("Todos os índices criados.");
+    await db.transaction((txn) async {
+      await txn.delete(tableClientes);
+      
+      for (final cliente in clientes) {
+        try {
+          await txn.insert(tableClientes, {
+            'codcli': cliente['codcli'],
+            'nomcli': cliente['nomcli'],
+            'cgccpfcli': cliente['cgccpfcli'],
+            'ufdcli': cliente['ufdcli'],
+            'endcli': cliente['endcli'],
+            'baicli': cliente['baicli'],
+            'muncli': cliente['muncli'],
+            'numtel001': cliente['numtel001'],
+            'numtel002': cliente['numtel002'],
+            'nomfnt': cliente['nomfnt'],
+            'emailcli': cliente['emailcli'],
+            'vlrlimcrd': cliente['vlrlimcrd'],
+            'codtab': cliente['codtab'],
+            'codcndpgt': cliente['codcndpgt'],
+            'vlrsldlimcrd': cliente['vlrsldlimcrd'],
+            'vlrdplabe': cliente['vlrdplabe'],
+            'vlrdplats': cliente['vlrdplats'],
+            'staati': cliente['staati'],
+          });
+          inseridos++;
+        } catch (e) {
+          _logger.w("Erro ao inserir cliente ${cliente['codcli']}: $e");
+        }
+      }
+    });
+    
+    _logger.i("Clientes da API inseridos: $inseridos de ${clientes.length}");
+    return inseridos;
+  }
+
+  /// Inserir duplicatas da API em lote
+  Future<int> inserirDuplicatasDaAPI(List<Map<String, dynamic>> duplicatas) async {
+    final db = await database;
+    int inseridos = 0;
+    
+    await db.transaction((txn) async {
+      await txn.delete(tableDuplicata);
+      
+      for (final duplicata in duplicatas) {
+        try {
+          await txn.insert(tableDuplicata, {
+            'numdoc': duplicata['numdoc'],
+            'codcli': duplicata['codcli'],
+            'dtavct': duplicata['dtavct'],
+            'vlrdpl': duplicata['vlrdpl'],
+          });
+          inseridos++;
+        } catch (e) {
+          _logger.w("Erro ao inserir duplicata ${duplicata['numdoc']}: $e");
+        }
+      }
+    });
+    
+    _logger.i("Duplicatas da API inseridas: $inseridos de ${duplicatas.length}");
+    return inseridos;
   }
 
   // ============= MÉTODOS AUXILIARES =============
-  
-  Future<void> close() async {
+
+  /// Converte qualquer valor para double, retornando null se não for possível
+  double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) {
+      return double.tryParse(value);
+    }
+    return null;
+  }
+
+  /// Buscar produto por código - MÉTODO OTIMIZADO
+  Future<Map<String, dynamic>?> getProdutoByCodigo(int codprd) async {
     final db = await database;
-    db.close();
-    _database = null;
-    _logger.i("Banco de dados fechado.");
+    final result = await db.query(
+      tableProdutos,
+      where: 'codprd = ?',
+      whereArgs: [codprd],
+      limit: 1,
+    );
+    
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  /// Buscar produtos com filtros
+  Future<List<Map<String, dynamic>>> getProdutos({
+    String? filtroNome,
+    String? filtroMarca,
+    bool? apenasAtivos,
+    int? limit,
+    int? offset,
+  }) async {
+    final db = await database;
+    
+    String whereClause = '';
+    List<dynamic> whereArgs = [];
+    
+    List<String> conditions = [];
+    
+    if (apenasAtivos == true) {
+      conditions.add("staati = ?");
+      whereArgs.add('A');
+    }
+    
+    if (filtroNome != null && filtroNome.isNotEmpty) {
+      conditions.add("dcrprd LIKE ?");
+      whereArgs.add('%$filtroNome%');
+    }
+    
+    if (filtroMarca != null && filtroMarca.isNotEmpty) {
+      conditions.add("nommrc LIKE ?");
+      whereArgs.add('%$filtroMarca%');
+    }
+    
+    if (conditions.isNotEmpty) {
+      whereClause = conditions.join(' AND ');
+    }
+    
+    return await db.query(
+      tableProdutos,
+      where: whereClause.isNotEmpty ? whereClause : null,
+      whereArgs: whereArgs.isNotEmpty ? whereArgs : null,
+      orderBy: 'dcrprd ASC',
+      limit: limit,
+      offset: offset,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getDuplicatasByCliente(int codcli) async {
+    final db = await database;
+    return await db.query(
+      tableDuplicata,
+      where: 'codcli = ?',
+      whereArgs: [codcli],
+      orderBy: 'dtavct DESC',
+    );
+  }
+
+  Future<Map<String, dynamic>> getStatusBanco() async {
+    final db = await database;
+    
+    final produtos = await db.rawQuery('SELECT COUNT(*) as count FROM $tableProdutos');
+    final clientes = await db.rawQuery('SELECT COUNT(*) as count FROM $tableClientes');
+    final duplicatas = await db.rawQuery('SELECT COUNT(*) as count FROM $tableDuplicata');
+    
+    return {
+      'produtos': produtos.first['count'],
+      'clientes': clientes.first['count'],
+      'duplicatas': duplicatas.first['count'],
+      'versao': _databaseVersion,
+      'nome': _databaseName,
+    };
+  }
+
+  Future<void> limparDadosAPI() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete(tableProdutos);
+      await txn.delete(tableClientes);
+      await txn.delete(tableDuplicata);
+      await txn.delete(tableCondicaoPagamento);
+      await txn.delete(tableClienteProduto);
+    });
+    _logger.i("Dados da API limpos");
+  }
+
+  /// Insere qualquer dado em qualquer tabela
+  Future<int> insertAnyData(String tableName, Map<String, dynamic> data) async {
+    try {
+      final db = await database;
+      final id = await db.insert(tableName, data);
+      _logger.d("Inserido em $tableName: ID $id");
+      return id;
+    } catch (e) {
+      _logger.e("Erro ao inserir em $tableName: $e");
+      rethrow;
+    }
+  }
+
+  /// Busca dados de qualquer tabela
+  Future<List<Map<String, dynamic>>> queryAnyTable(String tableName, {String? where, List<dynamic>? whereArgs}) async {
+    try {
+      final db = await database;
+      return await db.query(tableName, where: where, whereArgs: whereArgs);
+    } catch (e) {
+      _logger.e("Erro ao consultar $tableName: $e");
+      return [];
+    }
+  }
+
+  Future<void> close() async {
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+      _logger.i("Banco de dados fechado");
+    }
   }
 
   Future<void> deleteDatabase() async {
-    final path = join(await getDatabasesPath(), _databaseName);
-    await databaseFactory.deleteDatabase(path);
-    _database = null;
-    _logger.w("Banco de dados deletado.");
-  }
-
-  Future<Map<String, dynamic>> getDatabaseInfo() async {
-    final db = await database;
-    final List<Map<String, dynamic>> tables = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';"
-    );
-    
-    Map<String, int> tableCounts = {};
-    for (var table in tables) {
-      final count = Sqflite.firstIntValue(
-        await db.rawQuery('SELECT COUNT(*) FROM ${table['name']}')
-      );
-      tableCounts[table['name'] as String] = count ?? 0;
+    try {
+      await close();
+      final path = join(await getDatabasesPath(), _databaseName);
+      await databaseFactory.deleteDatabase(path);
+      _logger.w("Banco de dados deletado: $path");
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao deletar banco de dados", error: e, stackTrace: stackTrace);
     }
-    
-    return {
-      'version': _databaseVersion,
-      'path': await getDatabasesPath(),
-      'tables': tables.map((t) => t['name']).toList(),
-      'counts': tableCounts,
-    };
   }
 }

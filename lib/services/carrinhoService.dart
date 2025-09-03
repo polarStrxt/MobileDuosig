@@ -1,285 +1,366 @@
-// lib/services/carrinho_service.dart (Renomeie o arquivo no seu projeto)
+// lib/services/carrinho_service.dart
 import 'package:flutter_docig_venda/data/models/carrinho_model.dart';
 import 'package:flutter_docig_venda/data/models/carrinho_item_model.dart';
 import 'package:flutter_docig_venda/data/models/produto_model.dart';
 import 'package:flutter_docig_venda/data/models/cliente_model.dart';
-import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart'; // Nome de arquivo corrigido
-import 'package:flutter_docig_venda/services/dao/itemcarrinhoDao.dart'; // Nome de arquivo corrigido
-import 'package:flutter_docig_venda/services/dao/produto_dao.dart';
-import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart'; // Corrija o caminho para sua classe Carrinho (ChangeNotifier)
-import 'package:flutter_docig_venda/services/api_client.dart'; // Corrija o caminho para ApiResult
+import 'package:flutter_docig_venda/data/repositories/all_repositories.dart';
+import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart';
+import 'package:flutter_docig_venda/data/datasources/remoto/api_client.dart';
 import 'package:logger/logger.dart';
-// Removido: import 'package:flutter_docig_venda/services/database_helper.dart'; (não usado diretamente)
-// Adicione se o ClienteRepository estiver em um arquivo separado:
-import 'package:flutter_docig_venda/services/cliente_repository.dart';
-
 
 class CarrinhoService {
-  final CarrinhosDao _carrinhosDao;
-  final CarrinhoItemDao _carrinhoItemDao;
-  final ProdutoDao _produtoDao;
-  final ClienteRepository _clienteRepository; // Adicionado para getClientesComCarrinhosAbertos
-  final Logger _logger = Logger();
+  final RepositoryManager _repositoryManager;
+  final Logger _logger;
 
   CarrinhoService({
-    CarrinhosDao? carrinhosDao,
-    CarrinhoItemDao? carrinhoItemDao,
-    ProdutoDao? produtoDao,
-    ClienteRepository? clienteRepository, // Adicionar ao construtor
-  })  : _carrinhosDao = carrinhosDao ?? CarrinhosDao(),
-        _carrinhoItemDao = carrinhoItemDao ?? CarrinhoItemDao(),
-        _produtoDao = produtoDao ?? ProdutoDao(),
-        _clienteRepository = clienteRepository ?? ClienteRepository(); // Inicializar
+    required RepositoryManager repositoryManager,
+    Logger? logger,
+  }) : _repositoryManager = repositoryManager,
+       _logger = logger ?? Logger();
 
+  /// Salva as alterações do carrinho em memória para o banco de dados
   Future<ApiResult<bool>> salvarAlteracoesCarrinho(
       Carrinho carrinhoEmMemoria, Cliente cliente) async {
     try {
-      if (cliente.codcli == null) {
-        _logger.e("Salvar alterações: Cliente sem código (codcli).");
-        return ApiResult.error("Cliente inválido.");
+      // Validações iniciais
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return validationResult;
       }
-      // Assumindo que 'codtab' em ClienteModel é 'int' (não-nulável).1
-      // Se for 'int?', adicione: if (cliente.codtab == null) { return ApiResult.error("Tabela de preço não definida."); }
 
-      CarrinhoModel? carrinhoDb =
-          await _carrinhosDao.getOuCriarCarrinhoAberto(cliente.codcli!); // Usa '!'
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getOuCriarCarrinhoAberto(cliente.codcli);
 
-      if (carrinhoDb == null || carrinhoDb.id == null) {
-        _logger.e("Salvar alterações: Não foi possível obter/criar carrinho DB para cliente ${cliente.codcli}");
+      if (carrinhoDb == null) {
+        _logger.e("Falha ao obter/criar carrinho DB para cliente ${cliente.codcli}");
         return ApiResult.error("Falha ao acessar o carrinho no banco de dados.");
       }
 
+      // Se carrinho em memória está vazio, limpa o banco
       if (carrinhoEmMemoria.isEmpty) {
-        await _carrinhoItemDao.limparItensDoCarrinho(carrinhoDb.id!); // Usa '!'
-        _logger.i("Salvar alterações: Carrinho em memória vazio. Itens do carrinho DB ${carrinhoDb.id} limpos.");
-        await _carrinhosDao.atualizarDataModificacao(carrinhoDb.id!); // Usa '!'
+        await _repositoryManager.carrinhoItens.limparItensDoCarrinho(carrinhoDb.id!);
+        _logger.i("Carrinho em memória vazio. Itens do carrinho DB ${carrinhoDb.id} limpos.");
         return ApiResult.success(true);
       }
 
-      bool algumaAlteracaoFeita = false;
-      List<CarrinhoItemModel> itensNoBanco = await _carrinhoItemDao.getItensPorIdCarrinho(carrinhoDb.id!); // Usa '!'
-      Map<int, CarrinhoItemModel> itensNoBancoMap = {
-        for (var item in itensNoBanco)
-          if (item.codprd != null) // Verifica se codprd do item do banco não é nulo
-             item.codprd! : item  // Usa '!'
-      };
-
-      for (var entry in carrinhoEmMemoria.itens.entries) {
-        ProdutoModel produto = entry.key;
-        int quantidadeEmMemoria = entry.value;
-        double descontoPercentualEmMemoria = carrinhoEmMemoria.descontos[produto] ?? 0.0;
-
-        if (produto.codprd == null) {
-          _logger.w("Salvar alterações: Produto ${produto.dcrprd} sem codprd.");
-          continue;
-        }
-
-        double precoUnitarioRegistrado = produto.getPrecoParaTabela(cliente.codtab); // Assumindo codtab não nulo
-        double valorDescontoItem = precoUnitarioRegistrado * (descontoPercentualEmMemoria / 100);
-
-        CarrinhoItemModel itemParaSalvar = CarrinhoItemModel(
-          idCarrinho: carrinhoDb.id!,
-          codprd: produto.codprd!,
-          quantidade: quantidadeEmMemoria,
-          precoUnitarioRegistrado: precoUnitarioRegistrado,
-          descontoItem: valorDescontoItem,
-          dataAdicao: DateTime.now(),
-        );
-
-        CarrinhoItemModel? itemExistenteNoBanco = itensNoBancoMap[produto.codprd!];
-
-        if (itemExistenteNoBanco != null) {
-          if (itemExistenteNoBanco.quantidade != quantidadeEmMemoria ||
-              ((itemExistenteNoBanco.descontoItem - valorDescontoItem).abs() > 0.001) ||
-              ((itemExistenteNoBanco.precoUnitarioRegistrado - precoUnitarioRegistrado).abs() > 0.001) ) {
-            itemParaSalvar.id = itemExistenteNoBanco.id;
-            await _carrinhoItemDao.atualizarItem(itemParaSalvar);
-            algumaAlteracaoFeita = true;
-          }
-        } else {
-          await _carrinhoItemDao.salvarOuAtualizarItem(itemParaSalvar);
-          algumaAlteracaoFeita = true;
-        }
-        itensNoBancoMap.remove(produto.codprd!);
-      }
-
-      for(var itemNoBancoParaRemover in itensNoBancoMap.values){
-          if(itemNoBancoParaRemover.id != null){
-              await _carrinhoItemDao.removerItemPorId(itemNoBancoParaRemover.id!);
-              algumaAlteracaoFeita = true;
-          }
-      }
-
-      if (algumaAlteracaoFeita) {
-        await _carrinhosDao.atualizarDataModificacao(carrinhoDb.id!);
-      }
-
-      _logger.i("Salvar alterações: Carrinho salvo para cliente ${cliente.codcli} no carrinho DB ${carrinhoDb.id}.");
-      return ApiResult.success(true);
-    } catch (e, s) {
-      _logger.e("Erro em salvarAlteracoesCarrinho", error: e, stackTrace: s);
+      return await _processarItensCarrinho(carrinhoEmMemoria, cliente, carrinhoDb);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao salvar alterações do carrinho", error: e, stackTrace: stackTrace);
       return ApiResult.error("Erro ao salvar carrinho: $e");
     }
   }
 
+  /// Recupera o carrinho do cliente do banco de dados
   Future<ApiResult<Carrinho>> recuperarCarrinho(Cliente cliente) async {
     try {
-      if (cliente.codcli == null) {
-         _logger.e("Recuperar carrinho: Cliente sem código (codcli).");
-         return ApiResult.error("Cliente inválido.");
-       }
-      // Assumindo codtab não-nulável.
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return ApiResult.error(validationResult.errorMessage!);
+      }
 
-      _logger.i("Recuperando carrinho do cliente ${cliente.codcli}...");
-      CarrinhoModel? carrinhoDb = await _carrinhosDao.getCarrinhoAberto(cliente.codcli!);
+      _logger.i("Recuperando carrinho do cliente ${cliente.codcli}");
+      
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getCarrinhoAberto(cliente.codcli);
 
-      if (carrinhoDb == null || carrinhoDb.id == null) {
-        _logger.i("Recuperar carrinho: Nenhum carrinho aberto para cliente ${cliente.codcli}.");
+      if (carrinhoDb == null) {
+        _logger.i("Nenhum carrinho aberto para cliente ${cliente.codcli}");
         return ApiResult.success(Carrinho());
       }
 
-      List<CarrinhoItemModel> itensDb = await _carrinhoItemDao.getItensPorIdCarrinho(carrinhoDb.id!);
+      final itensDb = await _repositoryManager.carrinhoItens
+          .getItensPorIdCarrinho(carrinhoDb.id!);
 
-      Map<ProdutoModel, int> carrinhoItensMemoria = {};
-      Map<ProdutoModel, double> descontosPercentuaisMemoria = {};
+      final carrinhoRecuperado = await _construirCarrinhoFromItens(itensDb);
 
-      for (var itemDb in itensDb) {
-         if (itemDb.codprd == null) {
-             _logger.w("Recuperar carrinho: Item de carrinho ${itemDb.id} sem codprd.");
-             continue;
-         }
-         ProdutoModel? produto = await _produtoDao.getProdutoByCodigo(itemDb.codprd!);
-
-        if (produto != null) {
-          carrinhoItensMemoria[produto] = itemDb.quantidade;
-          if (itemDb.precoUnitarioRegistrado > 0) {
-            double descontoPercentual = (itemDb.descontoItem / itemDb.precoUnitarioRegistrado) * 100;
-            descontoPercentual = double.parse(descontoPercentual.toStringAsFixed(2));
-
-            if (produto.perdscmxm > 0 && descontoPercentual > produto.perdscmxm) {
-                descontosPercentuaisMemoria[produto] = produto.perdscmxm;
-            } else if (descontoPercentual > 0){
-                descontosPercentuaisMemoria[produto] = descontoPercentual;
-            }
-          } else if (itemDb.descontoItem != 0){
-             _logger.w("Recuperar carrinho: Não foi possível calcular desconto para item ${itemDb.id}");
-          }
-        } else {
-          _logger.w("Recuperar carrinho: Produto com codprd ${itemDb.codprd} não encontrado.");
-        }
-      }
-      _logger.i("Recuperar carrinho: Carrinho recuperado para cliente ${cliente.codcli} com ${carrinhoItensMemoria.length} tipos.");
-      return ApiResult.success(Carrinho(itens: carrinhoItensMemoria, descontos: descontosPercentuaisMemoria));
-    } catch (e, s) {
-      _logger.e("Erro em recuperarCarrinho", error: e, stackTrace: s);
+      _logger.i("Carrinho recuperado para cliente ${cliente.codcli} com ${carrinhoRecuperado.itens.length} tipos");
+      return ApiResult.success(carrinhoRecuperado);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao recuperar carrinho", error: e, stackTrace: stackTrace);
       return ApiResult.error("Erro ao recuperar carrinho: $e");
     }
   }
 
+  /// Finaliza o carrinho do cliente
   Future<ApiResult<bool>> finalizarCarrinho(Cliente cliente) async {
     try {
-      if (cliente.codcli == null) {
-         _logger.e("Finalizar carrinho: Cliente sem código (codcli).");
-         return ApiResult.error("Cliente inválido.");
-       }
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return validationResult;
+      }
 
-      CarrinhoModel? carrinhoDb = await _carrinhosDao.getCarrinhoAberto(cliente.codcli!);
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getCarrinhoAberto(cliente.codcli);
 
-      if (carrinhoDb == null || carrinhoDb.id == null) {
-        _logger.w("Finalizar carrinho: Nenhum carrinho aberto para cliente ${cliente.codcli}.");
+      if (carrinhoDb == null) {
+        _logger.w("Nenhum carrinho aberto para finalizar do cliente ${cliente.codcli}");
         return ApiResult.error("Nenhum carrinho aberto para finalizar.");
       }
 
-      List<CarrinhoItemModel> itens = await _carrinhoItemDao.getItensPorIdCarrinho(carrinhoDb.id!);
-      if (itens.isEmpty) {
-          _logger.i("Finalizar carrinho: Carrinho ${carrinhoDb.id} está vazio. Marcando como 'abandonado'.");
-          await _carrinhosDao.atualizarStatusCarrinho(carrinhoDb.id!, 'abandonado');
-          return ApiResult.success(true);
-      }
+      final itens = await _repositoryManager.carrinhoItens
+          .getItensPorIdCarrinho(carrinhoDb.id!);
 
-      bool sucesso = await _carrinhosDao.atualizarStatusCarrinho(carrinhoDb.id!, 'finalizado');
+      final novoStatus = itens.isEmpty ? 'abandonado' : 'finalizado';
+      final sucesso = await _repositoryManager.carrinhos
+          .atualizarStatusCarrinho(carrinhoDb.id!, novoStatus);
 
       if (sucesso) {
-        _logger.i("Finalizar carrinho: Carrinho ${carrinhoDb.id} finalizado para cliente ${cliente.codcli}.");
+        _logger.i("Carrinho ${carrinhoDb.id} $novoStatus para cliente ${cliente.codcli}");
         return ApiResult.success(true);
       } else {
-        _logger.e("Finalizar carrinho: Falha ao atualizar status do carrinho ${carrinhoDb.id}.");
         return ApiResult.error("Falha ao finalizar o carrinho no banco de dados.");
       }
-    } catch (e, s) {
-      _logger.e("Erro em finalizarCarrinho", error: e, stackTrace: s);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao finalizar carrinho", error: e, stackTrace: stackTrace);
       return ApiResult.error("Erro ao finalizar carrinho: $e");
     }
   }
 
+  /// Limpa todos os itens do carrinho do cliente
   Future<ApiResult<bool>> limparCarrinho(Cliente cliente) async {
     try {
-      if (cliente.codcli == null) {
-         _logger.e("Limpar carrinho: Cliente sem código (codcli).");
-         return ApiResult.error("Cliente inválido.");
-       }
-
-      CarrinhoModel? carrinhoDb =
-          await _carrinhosDao.getCarrinhoAberto(cliente.codcli!);
-
-      if (carrinhoDb != null && carrinhoDb.id != null) {
-        await _carrinhoItemDao.limparItensDoCarrinho(carrinhoDb.id!);
-        await _carrinhosDao.atualizarDataModificacao(carrinhoDb.id!);
-        _logger.i("Limpar carrinho: Itens do carrinho ${carrinhoDb.id} limpos para cliente ${cliente.codcli}.");
-        return ApiResult.success(true);
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return validationResult;
       }
-      _logger.i("Limpar carrinho: Nenhum carrinho ativo para cliente ${cliente.codcli}.");
+
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getCarrinhoAberto(cliente.codcli);
+
+      if (carrinhoDb != null) {
+        await _repositoryManager.carrinhoItens.limparItensDoCarrinho(carrinhoDb.id!);
+        _logger.i("Itens do carrinho ${carrinhoDb.id} limpos para cliente ${cliente.codcli}");
+      }
+      
       return ApiResult.success(true);
-    } catch (e, s) {
-      _logger.e("Erro em limparCarrinho", error: e, stackTrace: s);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao limpar carrinho", error: e, stackTrace: stackTrace);
       return ApiResult.error("Erro ao limpar carrinho: $e");
     }
   }
 
+  /// Verifica se o cliente tem carrinho com itens pendentes
   Future<ApiResult<bool>> clienteTemCarrinhoPendente(Cliente cliente) async {
     try {
-      if (cliente.codcli == null) {
-         _logger.w("Verificar pendente: Cliente sem código (codcli).");
-         return ApiResult.success(false); 
-       }
-
-      CarrinhoModel? carrinhoDb =
-          await _carrinhosDao.getCarrinhoAberto(cliente.codcli!);
-
-      if (carrinhoDb != null && carrinhoDb.id != null) {
-        List<CarrinhoItemModel> itens = await _carrinhoItemDao.getItensPorIdCarrinho(carrinhoDb.id!);
-        bool temItens = itens.isNotEmpty;
-        _logger.i("Verificar pendente: Cliente ${cliente.codcli} tem carrinho (ID: ${carrinhoDb.id}): ${temItens ? 'Sim' : 'Não'}.");
-        return ApiResult.success(temItens);
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return ApiResult.success(false);
       }
-      _logger.i("Verificar pendente: Cliente ${cliente.codcli} não tem carrinho.");
-      return ApiResult.success(false);
-    } catch (e, s) {
-      _logger.e("Erro em clienteTemCarrinhoPendente", error: e, stackTrace: s);
+
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getCarrinhoAberto(cliente.codcli);
+
+      if (carrinhoDb == null) {
+        return ApiResult.success(false);
+      }
+
+      final itens = await _repositoryManager.carrinhoItens
+          .getItensPorIdCarrinho(carrinhoDb.id!);
+      
+      final temItens = itens.isNotEmpty;
+      _logger.d("Cliente ${cliente.codcli} tem carrinho pendente: $temItens");
+      
+      return ApiResult.success(temItens);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao verificar carrinho pendente", error: e, stackTrace: stackTrace);
       return ApiResult.error("Erro ao verificar carrinho: $e");
     }
   }
 
+  /// Retorna lista de clientes que possuem carrinhos abertos
   Future<ApiResult<List<Cliente>>> getClientesComCarrinhosAbertos() async {
     try {
-      final List<int> codigosClientesComCarrinho =
-          await _carrinhosDao.getCodigosClientesComCarrinhoAberto();
+      final codigosClientes = await _repositoryManager.carrinhos
+          .getCodigosClientesComCarrinhoAberto();
 
-      if (codigosClientesComCarrinho.isEmpty) {
-        _logger.i("Nenhum cliente com carrinho aberto.");
-        return ApiResult.success([]); // Usa construtor correto
+      if (codigosClientes.isEmpty) {
+        _logger.i("Nenhum cliente com carrinho aberto");
+        return ApiResult.success(<Cliente>[]);
       }
 
-      // Assumindo que _clienteRepository está injetado e tem o método
-      final List<Cliente> clientesFiltrados =
-          await _clienteRepository.getClientesPorCodigos(codigosClientesComCarrinho);
-      
-      _logger.i("Retornando ${clientesFiltrados.length} clientes com carrinhos abertos.");
-      return ApiResult.success(clientesFiltrados); // Usa construtor correto
+      final clientes = <Cliente>[];
+      for (final codigo in codigosClientes) {
+        final cliente = await _repositoryManager.clientes.getClienteByCodigo(codigo);
+        if (cliente != null) {
+          clientes.add(cliente);
+        }
+      }
 
-    } catch (e, s) {
-      _logger.e("Erro em getClientesComCarrinhosAbertos", error: e, stackTrace: s);
+      _logger.i("Retornando ${clientes.length} clientes com carrinhos abertos");
+      return ApiResult.success(clientes);
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao buscar clientes com carrinhos abertos", error: e, stackTrace: stackTrace);
       return ApiResult.error("Falha ao carregar clientes com carrinho: $e");
     }
+  }
+
+  /// Obtém estatísticas do carrinho do cliente
+  Future<ApiResult<Map<String, dynamic>>> obterEstatisticasCarrinho(Cliente cliente) async {
+    try {
+      final validationResult = _validateCliente(cliente);
+      if (!validationResult.isSuccess) {
+        return ApiResult.error(validationResult.errorMessage!);
+      }
+
+      final carrinhoDb = await _repositoryManager.carrinhos
+          .getCarrinhoAberto(cliente.codcli);
+
+      if (carrinhoDb == null) {
+        return ApiResult.success({
+          'temCarrinho': false,
+          'totalItens': 0,
+          'valorTotal': 0.0,
+        });
+      }
+
+      final itens = await _repositoryManager.carrinhoItens
+          .getItensPorIdCarrinho(carrinhoDb.id!);
+
+      final totalItens = itens.fold<int>(0, (sum, item) => sum + item.quantidade);
+      final valorTotal = itens.fold<double>(0.0, (sum, item) => 
+          sum + (item.precoUnitarioRegistrado * item.quantidade - item.descontoItem));
+
+      return ApiResult.success({
+        'temCarrinho': true,
+        'totalItens': totalItens,
+        'tiposItens': itens.length,
+        'valorTotal': valorTotal,
+        'dataCriacao': carrinhoDb.dataCriacao?.toIso8601String(),
+        'dataUltimaModificacao': carrinhoDb.dataUltimaModificacao?.toIso8601String(),
+      });
+      
+    } catch (e, stackTrace) {
+      _logger.e("Erro ao obter estatísticas do carrinho", error: e, stackTrace: stackTrace);
+      return ApiResult.error("Erro ao obter estatísticas: $e");
+    }
+  }
+
+  // ==================== MÉTODOS PRIVADOS ====================
+
+  /// Valida se o cliente possui dados necessários
+  ApiResult<bool> _validateCliente(Cliente cliente) {
+    if (cliente.codcli == null) {
+      _logger.e("Cliente sem código (codcli)");
+      return ApiResult.error("Cliente inválido.");
+    }
+    return ApiResult.success(true);
+  }
+
+  /// Processa os itens do carrinho para salvar no banco
+  Future<ApiResult<bool>> _processarItensCarrinho(
+      Carrinho carrinhoMemoria, Cliente cliente, CarrinhoModel carrinhoDb) async {
+    
+    bool algumaAlteracaoFeita = false;
+    
+    final itensNoBanco = await _repositoryManager.carrinhoItens
+        .getItensPorIdCarrinho(carrinhoDb.id!);
+    
+    final itensNoBancoMap = <int, CarrinhoItemModel>{
+      for (var item in itensNoBanco)
+        if (item.codprd != null) item.codprd! : item
+    };
+
+    // Processa itens em memória
+    for (final entry in carrinhoMemoria.itens.entries) {
+      final produto = entry.key;
+      final quantidadeMemoria = entry.value;
+      final descontoPercentual = carrinhoMemoria.descontos[produto] ?? 0.0;
+
+      if (produto.codprd == null) {
+        _logger.w("Produto ${produto.dcrprd} sem codprd");
+        continue;
+      }
+
+      final precoUnitario = produto.getPrecoParaTabela(cliente.codtab);
+      final valorDesconto = precoUnitario * (descontoPercentual / 100);
+
+      final itemParaSalvar = CarrinhoItemModel(
+        id: itensNoBancoMap[produto.codprd!]?.id,
+        idCarrinho: carrinhoDb.id!,
+        codprd: produto.codprd!,
+        quantidade: quantidadeMemoria,
+        precoUnitarioRegistrado: precoUnitario,
+        descontoItem: valorDesconto,
+        dataAdicao: DateTime.now(),
+      );
+
+      final itemExistente = itensNoBancoMap[produto.codprd!];
+      
+      if (itemExistente != null) {
+        if (_itemPrecisaAtualizacao(itemExistente, itemParaSalvar)) {
+          // Usar upsert ao invés de update inexistente
+          await _repositoryManager.carrinhoItens.upsert(itemParaSalvar);
+          algumaAlteracaoFeita = true;
+        }
+      } else {
+        await _repositoryManager.carrinhoItens.salvarOuAtualizarItem(itemParaSalvar);
+        algumaAlteracaoFeita = true;
+      }
+      
+      itensNoBancoMap.remove(produto.codprd!);
+    }
+
+    // Remove itens que não estão mais no carrinho em memória
+    for (final itemRemover in itensNoBancoMap.values) {
+      if (itemRemover.id != null) {
+        await _repositoryManager.carrinhoItens.removerItemPorId(itemRemover.id!);
+        algumaAlteracaoFeita = true;
+      }
+    }
+
+    if (algumaAlteracaoFeita) {
+      await _repositoryManager.carrinhos.atualizarTotaisCarrinho(carrinhoDb.id!);
+    }
+
+    _logger.i("Carrinho salvo para cliente ${cliente.codcli}");
+    return ApiResult.success(true);
+  }
+
+  /// Verifica se um item precisa ser atualizado
+  bool _itemPrecisaAtualizacao(CarrinhoItemModel existente, CarrinhoItemModel novo) {
+    return existente.quantidade != novo.quantidade ||
+           (existente.descontoItem - novo.descontoItem).abs() > 0.001 ||
+           (existente.precoUnitarioRegistrado - novo.precoUnitarioRegistrado).abs() > 0.001;
+  }
+
+  /// Constrói um carrinho em memória a partir dos itens do banco
+  Future<Carrinho> _construirCarrinhoFromItens(List<CarrinhoItemModel> itensDb) async {
+    final carrinhoItens = <ProdutoModel, int>{};
+    final descontosPercentuais = <ProdutoModel, double>{};
+
+    for (final itemDb in itensDb) {
+      if (itemDb.codprd == null) {
+        _logger.w("Item ${itemDb.id} sem codprd");
+        continue;
+      }
+
+      final produto = await _repositoryManager.produtos.getProdutoByCodigo(itemDb.codprd!);
+      
+      if (produto != null) {
+        carrinhoItens[produto] = itemDb.quantidade;
+        
+        if (itemDb.precoUnitarioRegistrado > 0) {
+          double descontoPercentual = (itemDb.descontoItem / itemDb.precoUnitarioRegistrado) * 100;
+          descontoPercentual = double.parse(descontoPercentual.toStringAsFixed(2));
+
+          // Valida desconto máximo permitido
+          if (produto.perdscmxm > 0 && descontoPercentual > produto.perdscmxm) {
+            descontosPercentuais[produto] = produto.perdscmxm;
+          } else if (descontoPercentual > 0) {
+            descontosPercentuais[produto] = descontoPercentual;
+          }
+        }
+      } else {
+        _logger.w("Produto com codprd ${itemDb.codprd} não encontrado");
+      }
+    }
+
+    return Carrinho(itens: carrinhoItens, descontos: descontosPercentuais);
   }
 }

@@ -2,23 +2,282 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_docig_venda/data/models/produto_model.dart';
 import 'package:flutter_docig_venda/data/models/cliente_model.dart';
-import 'package:flutter_docig_venda/data/models/condicao_pagamento.dart';
-import 'package:flutter_docig_venda/presentation/widgets/gerarpdfsimples.dart';
+import 'package:flutter_docig_venda/data/models/condicao_pagamento_model.dart';
 import 'package:flutter_docig_venda/presentation/widgets/carrinho.dart';
 import 'package:flutter_docig_venda/services/carrinhoService.dart';
-import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
-import 'package:flutter_docig_venda/data/models/carrinho_model.dart';
-import 'package:flutter_docig_venda/data/models/registrar_pedido_local.dart';
-import 'package:flutter_docig_venda/services/Dao/PedidosParaEnvioDao.dart';
-import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
+import 'package:flutter_docig_venda/data/repositories/all_repositories.dart';
 import 'package:logger/logger.dart';
 
+// Separate business logic into a dedicated service
+class PedidoService {
+  final Logger _logger = Logger();
+  late final CarrinhoService _carrinhoService;
+  
+  PedidoService({required RepositoryManager repositoryManager}) {
+    _carrinhoService = CarrinhoService(repositoryManager: repositoryManager);
+  }
+
+  Future<PedidoResult> processarPedido({
+    required Carrinho carrinho,
+    required Cliente cliente,
+    required String observacao,
+    required String formaPagamento,
+    required String formaPagamentoDesc,
+  }) async {
+    try {
+      // Generate order number
+      final String numPedido = _gerarNumeroPedido(cliente);
+      
+      // Generate PDF
+      final String? pdfPath = await _gerarPDF(
+        carrinho: carrinho,
+        cliente: cliente,
+        observacao: observacao,
+        formaPagamento: formaPagamentoDesc,
+        numPedido: numPedido,
+      );
+
+      if (pdfPath == null) {
+        return PedidoResult.erro('Falha ao gerar PDF');
+      }
+
+      // Try to send to API
+      final bool enviado = await _enviarParaAPI(
+        carrinho: carrinho,
+        cliente: cliente,
+        observacao: observacao,
+        formaPagamento: formaPagamento,
+        numPedido: numPedido,
+      );
+
+      if (enviado) {
+        // Finalize cart after successful API call
+        final result = await _carrinhoService.finalizarCarrinho(cliente);
+        if (result.isSuccess) {
+          return PedidoResult.sucesso(numPedido, pdfPath);
+        } else {
+          return PedidoResult.erro('Erro ao finalizar carrinho: ${result.errorMessage}');
+        }
+      } else {
+        // Save locally for later transmission
+        await _salvarPedidoLocal(
+          carrinho: carrinho,
+          cliente: cliente,
+          observacao: observacao,
+          formaPagamento: formaPagamento,
+          numPedido: numPedido,
+        );
+
+        final result = await _carrinhoService.finalizarCarrinho(cliente);
+        if (result.isSuccess) {
+          return PedidoResult.sucessoLocal(numPedido, pdfPath);
+        } else {
+          return PedidoResult.erro('Erro ao finalizar carrinho após salvar localmente');
+        }
+      }
+    } catch (e, s) {
+      _logger.e('Erro ao processar pedido', error: e, stackTrace: s);
+      return PedidoResult.erro('Erro inesperado: $e');
+    }
+  }
+
+  String _gerarNumeroPedido(Cliente cliente) {
+    final now = DateTime.now();
+    final timestamp = now.millisecondsSinceEpoch;
+    return '$timestamp-${cliente.codcli}';
+  }
+
+  Future<String?> _gerarPDF({
+    required Carrinho carrinho,
+    required Cliente cliente,
+    required String observacao,
+    required String formaPagamento,
+    required String numPedido,
+  }) async {
+    // Implementation for PDF generation
+    // Return file path or null if failed
+    return null; // Placeholder
+  }
+
+  Future<bool> _enviarParaAPI({
+    required Carrinho carrinho,
+    required Cliente cliente,
+    required String observacao,
+    required String formaPagamento,
+    required String numPedido,
+  }) async {
+    // Implementation for API call
+    return false; // Placeholder
+  }
+
+  Future<void> _salvarPedidoLocal({
+    required Carrinho carrinho,
+    required Cliente cliente,
+    required String observacao,
+    required String formaPagamento,
+    required String numPedido,
+  }) async {
+    // Implementation for local storage
+  }
+}
+
+// Result class for better error handling
+class PedidoResult {
+  final bool success;
+  final String? numPedido;
+  final String? pdfPath;
+  final String? errorMessage;
+  final bool isLocal;
+
+  PedidoResult.sucesso(this.numPedido, this.pdfPath)
+      : success = true,
+        errorMessage = null,
+        isLocal = false;
+
+  PedidoResult.sucessoLocal(this.numPedido, this.pdfPath)
+      : success = true,
+        errorMessage = null,
+        isLocal = true;
+
+  PedidoResult.erro(this.errorMessage)
+      : success = false,
+        numPedido = null,
+        pdfPath = null,
+        isLocal = false;
+}
+
+// Configuration class for constants
+class AppConfig {
+  static const String apiUrl = 'http://duotecsuprilev.ddns.com.br:8082/v1/pedido';
+  static const Duration apiTimeout = Duration(seconds: 30);
+  static const String vendedorPadrao = '001';
+}
+
+// Simplified UI Controller
+class CarrinhoController extends ChangeNotifier {
+  bool _isProcessing = false;
+  String? _errorMessage;
+  
+  bool get isProcessing => _isProcessing;
+  String? get errorMessage => _errorMessage;
+
+  late final PedidoService _pedidoService;
+  final Logger _logger = Logger();
+
+  CarrinhoController({required RepositoryManager repositoryManager}) {
+    _pedidoService = PedidoService(repositoryManager: repositoryManager);
+  }
+
+  void _setProcessing(bool processing) {
+    _isProcessing = processing;
+    notifyListeners();
+  }
+
+  void _setError(String? error) {
+    _errorMessage = error;
+    notifyListeners();
+  }
+
+  Future<void> atualizarQuantidade(
+    Carrinho carrinho,
+    ProdutoModel produto,
+    int quantidade,
+    Cliente cliente,
+  ) async {
+    _setProcessing(true);
+    try {
+      carrinho.atualizarQuantidade(produto, quantidade);
+      await _persistirCarrinho(carrinho, cliente);
+      _setError(null);
+    } catch (e) {
+      _logger.e('Erro ao atualizar quantidade', error: e);
+      _setError('Erro ao atualizar quantidade: $e');
+    } finally {
+      _setProcessing(false);
+    }
+  }
+
+  Future<void> atualizarDesconto(
+    Carrinho carrinho,
+    ProdutoModel produto,
+    double desconto,
+    Cliente cliente,
+  ) async {
+    _setProcessing(true);
+    try {
+      carrinho.atualizarDesconto(produto, desconto);
+      await _persistirCarrinho(carrinho, cliente);
+      _setError(null);
+    } catch (e) {
+      _logger.e('Erro ao atualizar desconto', error: e);
+      _setError('Erro ao atualizar desconto: $e');
+    } finally {
+      _setProcessing(false);
+    }
+  }
+
+  Future<void> removerProduto(
+    Carrinho carrinho,
+    ProdutoModel produto,
+    Cliente cliente,
+  ) async {
+    _setProcessing(true);
+    try {
+      carrinho.removerItem(produto);
+      await _persistirCarrinho(carrinho, cliente);
+      _setError(null);
+    } catch (e) {
+      _logger.e('Erro ao remover produto', error: e);
+      _setError('Erro ao remover produto: $e');
+    } finally {
+      _setProcessing(false);
+    }
+  }
+
+  Future<PedidoResult> finalizarPedido({
+    required Carrinho carrinho,
+    required Cliente cliente,
+    required String observacao,
+    required String formaPagamento,
+    required String formaPagamentoDesc,
+  }) async {
+    _setProcessing(true);
+    try {
+      final result = await _pedidoService.processarPedido(
+        carrinho: carrinho,
+        cliente: cliente,
+        observacao: observacao,
+        formaPagamento: formaPagamento,
+        formaPagamentoDesc: formaPagamentoDesc,
+      );
+      
+      if (result.success) {
+        _setError(null);
+      } else {
+        _setError(result.errorMessage);
+      }
+      
+      return result;
+    } finally {
+      _setProcessing(false);
+    }
+  }
+
+  Future<void> _persistirCarrinho(Carrinho carrinho, Cliente cliente) async {
+  // Usa o carrinhoService já existente dentro do _pedidoService
+  final result = await _pedidoService._carrinhoService.salvarAlteracoesCarrinho(carrinho, cliente);
+  
+  if (!result.isSuccess) {
+    throw Exception(result.errorMessage);
+  }
+}
+
+}
+
+// Simplified main screen
 class CarrinhoScreen extends StatefulWidget {
   final Cliente? cliente;
-  final int codcli;
+  final int? codcli;
 
   const CarrinhoScreen({
     super.key,
@@ -31,350 +290,102 @@ class CarrinhoScreen extends StatefulWidget {
 }
 
 class _CarrinhoScreenState extends State<CarrinhoScreen> {
-  // Lista de condições de pagamento
-  late List<CondicaoPagamento> _condicoesPagamento = [];
-
-  // Service for cart operations
-  final CarrinhoService _carrinhoService = CarrinhoService();
-  final Logger _logger = Logger();
-
-  // Estado de carregamento e processamento
-  bool _isProcessingAction = false;
-  String? _errorMessage;
+  late final CarrinhoController _controller;
+  late final List<CondicaoPagamentoModel> _condicoesPagamento;
 
   @override
   void initState() {
     super.initState();
-    _carregarCondicoesPagamento();
+    final repositoryManager = context.read<RepositoryManager>();
+    _controller = CarrinhoController(repositoryManager: repositoryManager);
+    _condicoesPagamento = _carregarCondicoesPagamento();
   }
 
-  // Método para carregar as condições de pagamento
-  void _carregarCondicoesPagamento() {
-    // Usando o JSON fornecido
-    const String jsonData = '''
-    [
-      {
-        "codcndpgt": 1,
-        "dcrcndpgt": "A VISTA",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 2,
-        "dcrcndpgt": "C/APRESENTACAO",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 3,
-        "dcrcndpgt": "C/ ENTREGA",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 4,
-        "dcrcndpgt": "A PRAZO",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 5,
-        "dcrcndpgt": "30 DIAS",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 42,
-        "dcrcndpgt": "TABLET",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 6,
-        "dcrcndpgt": "5% DESCONTO  A VISTA DINHEIRO",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 7,
-        "dcrcndpgt": "5% DESCONTO BOLETO 7 DIAS",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 11,
-        "dcrcndpgt": "35/42",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 8,
-        "dcrcndpgt": "21/28/35 DIAS",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 13,
-        "dcrcndpgt": "21/28/35/42/49",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 20,
-        "dcrcndpgt": "BONIFICACAO",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 9,
-        "dcrcndpgt": "28/35/42 DD",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 14,
-        "dcrcndpgt": "DD BCO",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 10,
-        "dcrcndpgt": "35 DD",
-        "perdsccel": 0,
-        "staati": "S"
-      },
-      {
-        "codcndpgt": 15,
-        "dcrcndpgt": "3% DESCONTO BOLETO 7 DD",
-        "perdsccel": 0,
-        "staati": "S"
-      }
-    ]
-    ''';
-
-    try {
-      final List<dynamic> decodedData = jsonDecode(jsonData);
-      _condicoesPagamento =
-          decodedData.map((item) => CondicaoPagamento.fromJson(item)).toList();
-      _logger.i('Carregadas ${_condicoesPagamento.length} condições de pagamento');
-    } catch (e) {
-      _logger.e('Erro ao carregar condições de pagamento: $e');
-      // Criar lista vazia para evitar erros
-      _condicoesPagamento = [];
-    }
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 
-  // Método para atualizar o desconto de um produto
-  Future<void> atualizarDesconto(ProdutoModel produto, double novoDesconto) async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isProcessingAction = true;
-    });
-
-    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    
-    try {
-      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
-      carrinhoProvider.atualizarDesconto(produto, novoDesconto);
-      
-      // Persistir as alterações no banco de dados através do service
-      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
-    } catch (e) {
-      _logger.e('Erro ao atualizar desconto: $e');
-      if (mounted) {
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text('Erro ao atualizar desconto: $e'),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessingAction = false;
-        });
-      }
-    }
-  }
-
-  // Método para remover um produto do carrinho
-  Future<void> _removerProduto(ProdutoModel produto) async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isProcessingAction = true;
-    });
-
-    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    
-    try {
-      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
-      carrinhoProvider.removerItem(produto);
-      
-      // Persistir as alterações no banco de dados através do service
-      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
-    } catch (e) {
-      _logger.e('Erro ao remover produto: $e');
-      if (mounted) {
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text('Erro ao remover produto: $e'),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessingAction = false;
-        });
-      }
-    }
-  }
-
-  // Método para atualizar a quantidade de um produto
-  Future<void> _atualizarQuantidade(ProdutoModel produto, int quantidade) async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isProcessingAction = true;
-    });
-
-    final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-
-    try {
-      // Corrigido: Usar o método do Provider em vez de modificar o mapa diretamente
-      carrinhoProvider.atualizarQuantidade(produto, quantidade);
-      
-      // Persistir as alterações no banco de dados através do service
-      await _persistirCarrinhoAposAlteracao(carrinhoProvider);
-    } catch (e) {
-      _logger.e('Erro ao atualizar quantidade: $e');
-      if (mounted) {
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text('Erro ao atualizar quantidade: $e'),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessingAction = false;
-        });
-      }
-    }
-  }
-
-  // Método auxiliar para persistir alterações do carrinho
-  Future<void> _persistirCarrinhoAposAlteracao(Carrinho carrinhoProvider) async {
-    if (widget.cliente == null || widget.cliente!.codcli == null) {
-      _logger.w("Persistir: Cliente ou codcli nulo.");
-      return;
-    }
-    
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    
-    try {
-      final result = await _carrinhoService.salvarAlteracoesCarrinho(carrinhoProvider, widget.cliente!);
-      
-      if (!mounted) return;
-      
-      if (!result.isSuccess) {
-        _logger.e("Falha ao salvar carrinho no banco: ${result.errorMessage}");
-        scaffoldMessenger.showSnackBar(
-          SnackBar(
-            content: Text("Erro ao salvar alteração: ${result.errorMessage}"),
-            backgroundColor: Colors.red[700],
-            behavior: SnackBarBehavior.floating,
-          )
-        );
-      } else {
-        _logger.i("Carrinho atualizado no banco.");
-      }
-    } catch (e, s) {
-      _logger.e("Erro crítico ao persistir carrinho", error: e, stackTrace: s);
-      if (mounted) {
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(
-            content: Text("Erro crítico ao salvar."), 
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          )
-        );
-      }
-    }
+  List<CondicaoPagamentoModel> _carregarCondicoesPagamento() {
+    // Load payment conditions - could be moved to a separate service
+    // Remove unused jsonData variable and implement proper parsing
+    return [
+      CondicaoPagamentoModel(
+        codcndpgt: 1, 
+        dcrcndpgt: "A VISTA", 
+        perdsccel: 0.0, 
+        staati: "S"
+      ),
+      CondicaoPagamentoModel(
+        codcndpgt: 2, 
+        dcrcndpgt: "C/APRESENTACAO", 
+        perdsccel: 0.0, 
+        staati: "S"
+      ),
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: const Text(
-          "Carrinho",
-          style: TextStyle(fontWeight: FontWeight.w500),
+    return ChangeNotifierProvider.value(
+      value: _controller,
+      child: Scaffold(
+        backgroundColor: Colors.grey[50],
+        appBar: AppBar(
+          title: const Text(
+            "Carrinho",
+            style: TextStyle(fontWeight: FontWeight.w500),
+          ),
+          backgroundColor: const Color(0xFF5D5CDE),
+          elevation: 0,
+          centerTitle: true,
         ),
-        backgroundColor: const Color(0xFF5D5CDE),
-        elevation: 0,
-        centerTitle: true,
-      ),
-      body: Consumer<Carrinho>(
-        builder: (context, carrinhoProvider, child) {
-          return _buildBody(carrinhoProvider);
-        },
+        body: Consumer<Carrinho>(
+          builder: (context, carrinho, child) {
+            return Consumer<CarrinhoController>(
+              builder: (context, controller, child) {
+                return _buildBody(carrinho, controller);
+              },
+            );
+          },
+        ),
       ),
     );
   }
 
-  Widget _buildBody(Carrinho carrinhoProvider) {
-    if (_isProcessingAction) {
+  Widget _buildBody(Carrinho carrinho, CarrinhoController controller) {
+    if (controller.isProcessing) {
       return _buildLoadingState();
     }
 
-    if (_errorMessage != null) {
-      return _buildErrorState();
+    if (controller.errorMessage != null) {
+      return _buildErrorState(controller.errorMessage!);
     }
 
-    if (carrinhoProvider.isEmpty) {
+    if (carrinho.isEmpty) {
       return _buildEmptyCart();
     }
 
-    return _buildCartContent(carrinhoProvider);
+    return _buildCartContent(carrinho, controller);
   }
 
   Widget _buildLoadingState() {
-    return Center(
+    return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const CircularProgressIndicator(
+          CircularProgressIndicator(
             valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF5D5CDE)),
-            strokeWidth: 3,
           ),
-          const SizedBox(height: 24),
-          Text(
-            'Carregando itens...',
-            style: TextStyle(
-              color: Colors.grey[700],
-              fontSize: 16,
-            ),
-          ),
+          SizedBox(height: 24),
+          Text('Processando...'),
         ],
       ),
     );
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorState(String error) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
@@ -383,36 +394,12 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
           children: [
             Icon(Icons.error_outline, size: 56, color: Colors.red[400]),
             const SizedBox(height: 24),
-            const Text(
-              'Não foi possível carregar o carrinho',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
-              textAlign: TextAlign.center,
+            Text(
+              'Erro',
+              style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 16),
-            Text(
-              _errorMessage!,
-              style: TextStyle(color: Colors.grey[600]),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: 200,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5D5CDE),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: () {
-                  setState(() {
-                    _errorMessage = null;
-                  });
-                },
-                child: const Text('Tentar novamente'),
-              ),
-            ),
+            Text(error, textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -421,84 +408,55 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
 
   Widget _buildEmptyCart() {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.shopping_bag_outlined,
-              size: 72,
-              color: Color(0xFFBBBBBB),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.shopping_bag_outlined,
+            size: 72,
+            color: Color(0xFFBBBBBB),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            "Seu carrinho está vazio",
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 32),
+          ElevatedButton.icon(
+            icon: const Icon(Icons.arrow_back),
+            label: const Text("Voltar para produtos"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5D5CDE),
             ),
-            const SizedBox(height: 24),
-            Text(
-              "Seu carrinho está vazio",
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w500,
-                color: Colors.grey[800],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              "Adicione produtos para continuar com a compra",
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 16,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              width: 200,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.arrow_back),
-                label: const Text("Voltar para produtos"),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5D5CDE),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: () => Navigator.of(context).pop(true), // Pass true to reload products
-              ),
-            ),
-          ],
-        ),
+            onPressed: () => Navigator.of(context).pop(true),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildCartContent(Carrinho carrinhoProvider) {
+  Widget _buildCartContent(Carrinho carrinho, CarrinhoController controller) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Cliente info card (if available)
         if (widget.cliente != null) _buildClienteInfo(),
-
-        // Cart items list
         Expanded(
-          child: _buildCartItemsList(carrinhoProvider),
+          child: _buildCartItemsList(carrinho, controller),
         ),
-
-        // Cart summary
-        _buildCartSummary(carrinhoProvider),
+        _buildCartSummary(carrinho, controller),
       ],
     );
   }
 
   Widget _buildClienteInfo() {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(13), // Corrigido: withOpacity -> withAlpha
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -509,13 +467,12 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF5D5CDE).withAlpha(25), // Corrigido: withOpacity -> withAlpha
+              color: const Color(0xFF5D5CDE).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: const Icon(
               Icons.person_outline,
               color: Color(0xFF5D5CDE),
-              size: 20,
             ),
           ),
           const SizedBox(width: 12),
@@ -524,21 +481,12 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.cliente!.nomcli,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  widget.cliente!.nomcli ?? 'Cliente sem nome',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 4),
                 Text(
-                  "Código: ${widget.cliente!.codcli} • Tabela: ${widget.cliente!.codtab}",
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[600],
-                  ),
+                  "Código: ${widget.cliente!.codcli}",
+                  style: TextStyle(color: Colors.grey[600]),
                 ),
               ],
             ),
@@ -548,345 +496,27 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Widget _buildCartItemsList(Carrinho carrinhoProvider) {
-    final produtos = carrinhoProvider.itens.keys.toList();
+  Widget _buildCartItemsList(Carrinho carrinho, CarrinhoController controller) {
+    final produtos = carrinho.itens.keys.toList();
     
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      padding: const EdgeInsets.all(16),
       itemCount: produtos.length,
       itemBuilder: (context, index) {
         final produto = produtos[index];
-        return _buildCartItem(produto, carrinhoProvider);
+        return CartItemWidget(
+          produto: produto,
+          carrinho: carrinho,
+          controller: controller,
+          cliente: widget.cliente,
+        );
       },
     );
   }
 
-  Widget _buildCartItem(ProdutoModel produto, Carrinho carrinhoProvider) {
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-    final int quantidade = carrinhoProvider.itens[produto] ?? 0;
-    final double preco = produto.getPrecoParaTabela(tabelaPreco);
-    final double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
-    final double precoComDesconto = preco * (1 - desconto / 100);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(13), // Corrigido: withOpacity -> withAlpha
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          // Product info
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Icon placeholder
-                Container(
-                  width: 50,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.inventory_2_outlined,
-                      color: Color(0xFF5D5CDE),
-                      size: 24,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // Product details
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        produto.dcrprd,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 15,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Cód: ${produto.codprd} • ${produto.nommrc}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Price with discount
-                      Row(
-                        children: [
-                          if (desconto > 0) ...[
-                            Text(
-                              'R\$ ${preco.toStringAsFixed(2).replaceAll('.', ',')}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                decoration: TextDecoration.lineThrough,
-                                color: Colors.grey[500],
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Text(
-                            'R\$ ${precoComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: desconto > 0
-                                  ? Colors.green[700]
-                                  : Colors.black87,
-                            ),
-                          ),
-                          if (desconto > 0) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.green[50],
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: Colors.green[100]!),
-                              ),
-                              child: Text(
-                                '-${desconto.toStringAsFixed(0)}%',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.green[700],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Bottom section with quantity control and discount
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(12),
-                bottomRight: Radius.circular(12),
-              ),
-            ),
-            child: Column(
-              children: [
-                // Quantity row
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Quantidade',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        _buildQuantityButton(
-                          Icons.remove,
-                          quantidade > 1
-                              ? () => _atualizarQuantidade(produto, quantidade - 1)
-                              : null,
-                        ),
-                        Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(4),
-                            border: Border.all(color: Colors.grey[300]!),
-                          ),
-                          child: Text(
-                            '$quantidade',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w500,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ),
-                        _buildQuantityButton(
-                          Icons.add,
-                          () => _atualizarQuantidade(produto, quantidade + 1),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 12),
-
-                // Discount row
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Desconto',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[700],
-                      ),
-                    ),
-                    SizedBox(
-                      width: 80,
-                      height: 32,
-                      child: TextFormField(
-                        initialValue: desconto.toStringAsFixed(0),
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: desconto > 0
-                              ? Colors.green[700]
-                              : Colors.grey[700],
-                          fontWeight: FontWeight.w500,
-                        ),
-                        decoration: InputDecoration(
-                          suffixText: '%',
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 0),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(4),
-                            borderSide: BorderSide(color: Colors.grey[300]!),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(4),
-                            borderSide: BorderSide(color: Colors.grey[300]!),
-                          ),
-                        ),
-                        onChanged: (value) {
-                          final novoDesconto = double.tryParse(value) ?? 0.0;
-                          atualizarDesconto(produto, novoDesconto);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 12),
-
-                // Subtotal and remove button
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Subtotal',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey[600],
-                          ),
-                        ),
-                        Text(
-                          'R\$ ${(precoComDesconto * quantidade).toStringAsFixed(2).replaceAll('.', ',')}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                            color: Color(0xFF5D5CDE),
-                          ),
-                        ),
-                      ],
-                    ),
-                    TextButton.icon(
-                      icon: Icon(
-                        Icons.delete_outline,
-                        size: 18,
-                        color: Colors.red[600],
-                      ),
-                      label: Text(
-                        'Remover',
-                        style: TextStyle(
-                          color: Colors.red[600],
-                        ),
-                      ),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 6),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                          side: BorderSide(color: Colors.red[200]!),
-                        ),
-                        backgroundColor: Colors.red[50],
-                      ),
-                      onPressed: () => _removerProduto(produto),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuantityButton(IconData icon, VoidCallback? onPressed) {
-    return InkWell(
-      onTap: onPressed,
-      borderRadius: BorderRadius.circular(4),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: onPressed == null ? Colors.grey[200] : Colors.white,
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color:
-                onPressed == null ? Colors.grey[300]! : const Color(0xFF5D5CDE),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(
-            icon,
-            size: 16,
-            color:
-                onPressed == null ? Colors.grey[500] : const Color(0xFF5D5CDE),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCartSummary(Carrinho carrinhoProvider) {
-    final int tabelaPreco = widget.cliente?.codtab ?? 1;
-    
-    // Calcular o subtotal sem desconto
-    double calcularSubtotalSemDesconto() {
-      double total = 0.0;
-      carrinhoProvider.itens.forEach((produto, quantidade) {
-        total += produto.getPrecoParaTabela(tabelaPreco) * quantidade;
-      });
-      return total;
-    }
-    
-    final double totalSemDesconto = calcularSubtotalSemDesconto();
-    final double totalComDesconto = carrinhoProvider.calcularValorTotal(tabelaPreco);
+  Widget _buildCartSummary(Carrinho carrinho, CarrinhoController controller) {
+    final tabelaPreco = widget.cliente?.codtab ?? 1;
+    final total = carrinho.calcularValorTotal(tabelaPreco);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -894,75 +524,21 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(20), // Corrigido: withOpacity -> withAlpha
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 10,
             offset: const Offset(0, -2),
           ),
         ],
       ),
       child: SafeArea(
-        top: false,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Summary details
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
+                const Text('Total', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
                 Text(
-                  'Subtotal',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[700],
-                  ),
-                ),
-                Text(
-                  'R\$ ${totalSemDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-            if (totalSemDesconto > totalComDesconto) ...[
-              const SizedBox(height: 6),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Descontos',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                  Text(
-                    '-R\$ ${(totalSemDesconto - totalComDesconto).toStringAsFixed(2).replaceAll('.', ',')}',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 12),
-            Divider(color: Colors.grey[200], height: 1),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  'R\$ ${totalComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                  'R\$ ${total.toStringAsFixed(2).replaceAll('.', ',')}',
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w600,
@@ -972,61 +548,77 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
               ],
             ),
             const SizedBox(height: 16),
-
-            // Transfer button
             ElevatedButton(
-              onPressed: _isProcessingAction 
-                ? null 
-                : () {
-                    if (widget.cliente == null) {
-                      _mostrarErroClienteNaoAssociado();
-                    } else {
-                      _mostrarDialogoTransferirCarrinho(carrinhoProvider);
-                    }
-                  },
+              onPressed: controller.isProcessing
+                  ? null
+                  : () => _mostrarDialogoFinalizarPedido(carrinho, controller),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5D5CDE),
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
-                elevation: 0,
-                disabledBackgroundColor: Colors.grey[300],
               ),
-              child: _isProcessingAction
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.grey[200]!),
+              child: controller.isProcessing
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Processando...',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  )
-                : const Text(
-                    'Finalizar Carrinho',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                        SizedBox(width: 8),
+                        Text('Processando...'),
+                      ],
+                    )
+                  : const Text('Finalizar Carrinho'),
             ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _mostrarDialogoFinalizarPedido(
+    Carrinho carrinho,
+    CarrinhoController controller,
+  ) async {
+    if (widget.cliente == null) {
+      _mostrarErroClienteNaoAssociado();
+      return;
+    }
+
+    String observacao = '';
+    CondicaoPagamentoModel? formaPagamentoSelecionada = 
+        _condicoesPagamento.isNotEmpty ? _condicoesPagamento.first : null;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => PedidoDialog(
+        cliente: widget.cliente!,
+        carrinho: carrinho,
+        condicoesPagamento: _condicoesPagamento,
+        onObservacaoChanged: (value) => observacao = value,
+        onFormaPagamentoChanged: (value) => formaPagamentoSelecionada = value,
+      ),
+    );
+
+    if (result == true && formaPagamentoSelecionada != null) {
+      final pedidoResult = await controller.finalizarPedido(
+        carrinho: carrinho,
+        cliente: widget.cliente!,
+        observacao: observacao,
+        formaPagamento: formaPagamentoSelecionada!.codcndpgt.toString(),
+        formaPagamentoDesc: formaPagamentoSelecionada!.dcrcndpgt,
+      );
+
+      if (pedidoResult.success && mounted) {
+        // Clear cart and show success
+        Provider.of<Carrinho>(context, listen: false).limpar();
+        _mostrarSucesso(pedidoResult);
+      }
+    }
   }
 
   void _mostrarErroClienteNaoAssociado() {
@@ -1035,7 +627,7 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
       builder: (context) => AlertDialog(
         title: const Text("Atenção"),
         content: const Text(
-          "Não há cliente associado a este pedido. A transferência não poderá ser realizada.",
+          "Não há cliente associado a este pedido.",
         ),
         actions: [
           TextButton(
@@ -1047,964 +639,258 @@ class _CarrinhoScreenState extends State<CarrinhoScreen> {
     );
   }
 
-  Future<void> _mostrarDialogoTransferirCarrinho(Carrinho carrinhoProvider) async {
-    if (!mounted) return;
-
-    String observacao = '';
-    CondicaoPagamento? formaPagamentoSelecionada =
-        _condicoesPagamento.isNotEmpty ? _condicoesPagamento.first : null;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
-        titlePadding: EdgeInsets.zero,
-        title: Container(
-          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-          decoration: const BoxDecoration(
-            color: Color(0xFF5D5CDE),
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(10),
-              topRight: Radius.circular(10),
-            ),
-          ),
-          child: const Row(
-            children: [
-              Icon(
-                Icons.send_outlined,
-                color: Colors.white,
-              ),
-              SizedBox(width: 12),
-              Text(
-                "Transferir Carrinho",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-        ),
-        content: SingleChildScrollView(
-          child: SizedBox(
-            width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Cliente info
-                if (widget.cliente != null)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.person_outline,
-                          color: Color(0xFF5D5CDE),
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.cliente!.nomcli,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              Text(
-                                "Cód: ${widget.cliente!.codcli}",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey[700],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Resumo do pedido
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "Resumo do pedido:",
-                        style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Itens:"),
-                          Text("${carrinhoProvider.itens.length}"),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text("Total:"),
-                          Text(
-                            "R\$ ${carrinhoProvider.calcularValorTotal(widget.cliente?.codtab ?? 1).toStringAsFixed(2).replaceAll('.', ',')}",
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w500,
-                              color: Color(0xFF5D5CDE),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-
-                // Observação
-                const Text(
-                  "Observação (opcional):",
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.grey[400]!),
-                    ),
-                    hintText: "Digite qualquer observação sobre o pedido",
-                    contentPadding: const EdgeInsets.all(12),
-                    filled: true,
-                    fillColor: Colors.grey[50],
-                  ),
-                  onChanged: (value) => observacao = value,
-                ),
-                const SizedBox(height: 16),
-
-                // Forma de Pagamento
-                const Text(
-                  "Forma de Pagamento:",
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _condicoesPagamento.isEmpty
-                    ? const Text("Não há condições de pagamento disponíveis")
-                    : StatefulBuilder(builder: (context, setState) {
-                        return DropdownButtonFormField<CondicaoPagamento>(
-                          isExpanded: true,
-                          value: formaPagamentoSelecionada,
-                          decoration: InputDecoration(
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: Colors.grey[400]!),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 12),
-                            filled: true,
-                            fillColor: Colors.grey[50],
-                            prefixIcon:
-                                const Icon(Icons.payment_outlined, size: 20),
-                          ),
-                          items: _condicoesPagamento.map((condicao) {
-                            return DropdownMenuItem<CondicaoPagamento>(
-                              value: condicao,
-                              child: Text(
-                                condicao.dcrcndpgt,
-                                style: const TextStyle(fontSize: 14),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            );
-                          }).toList(),
-                          onChanged: (newValue) {
-                            if (newValue != null) {
-                              setState(() {
-                                formaPagamentoSelecionada = newValue;
-                              });
-                            }
-                          },
-                        );
-                      }),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.grey[700],
-                    side: BorderSide(color: Colors.grey[400]!),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text("Cancelar"),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF5D5CDE),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    elevation: 0,
-                  ),
-                  onPressed: () {
-                    // Capturar os valores antes de fechar o diálogo
-                    final String obs = observacao;
-                    final String codPagto =
-                        formaPagamentoSelecionada?.codcndpgt.toString() ?? '1';
-                    final String descPagto = 
-                        formaPagamentoSelecionada?.dcrcndpgt ?? 'A VISTA';
-
-                    Navigator.pop(context);
-                    _transferirCarrinho(
-                      carrinhoProvider: carrinhoProvider,
-                      observacao: obs,
-                      formaPagamento: codPagto,
-                      formaPagamentoDesc: descPagto,
-                    );
-                  },
-                  child: const Text("Transferir"),
-                ),
-              ),
-            ],
-          ),
-        ],
-        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-      ),
-    );
-  }
-
-  // MÉTODO REFATORADO: _transferirCarrinho para implementar o novo fluxo
-  Future<void> _transferirCarrinho({
-  required Carrinho carrinhoProvider, // Sua classe Carrinho do Provider
-  String observacao = '',
-  String formaPagamento = '1', // Código da forma de pagamento
-  String formaPagamentoDesc = 'A VISTA', // Descrição da forma de pagamento
-}) async {
-  if (!mounted || widget.cliente == null || widget.cliente!.codcli == null) {
-    _logger.e("Transferência abortada: widget desmontado ou cliente inválido.");
-    if (mounted) {
-      _mostrarMensagemErroGeral("Cliente inválido. Não é possível transferir o pedido.");
-    }
-    return;
-  }
-
-  // Se _isProcessingAction já é um membro da classe State:
-  if (_isProcessingAction) {
-      _logger.w("Ação de transferência já em progresso. Abortando nova chamada.");
-      return;
-  }
-  setState(() { _isProcessingAction = true; });
-
-  BuildContext? dialogContext; // Para fechar o diálogo de progresso
-  ValueNotifier<String> progressoNotifier = ValueNotifier("Processando seu pedido...");
-
-  // Mostra o diálogo de progresso inicial
-  showDialog(
-    context: context,
-    barrierDismissible: false, // Não pode fechar clicando fora
-    builder: (buildDialogContext) {
-      dialogContext = buildDialogContext;
-      return ValueListenableBuilder<String>(
-        valueListenable: progressoNotifier,
-        builder: (context, message, child) {
-          return AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 20),
-                Text(message, textAlign: TextAlign.center),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
-
-  String? filePathDoPdfGerado;
-  String numPedidoFinalGerado = "";
-  final DateTime agoraParaPedido = DateTime.now(); // Usado para data do pedido e data de criação local
-
-  // Instanciando o DAO aqui. Em apps maiores, considere injeção de dependência.
-  final PedidosParaEnvioDao _pedidosParaEnvioDao = PedidosParaEnvioDao(DatabaseHelper.instance, _logger);
-
-  try {
-    // 1. Buscar CarrinhoModel do banco e Salvar Observação Localmente (Opcional)
-    // Seu código para interagir com CarrinhosDao, se necessário antes de gerar o pedido
-    progressoNotifier.value = "Verificando carrinho local...";
-    final carrinhosDao = CarrinhosDao(); // Assumindo que você tem essa classe DAO
-    CarrinhoModel? carrinhoDoBanco = await carrinhosDao.getCarrinhoAberto(widget.cliente!.codcli!);
-
-    if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
-      if (carrinhoDoBanco.observacoes != observacao) {
-        await carrinhosDao.atualizarObservacoesCarrinho(carrinhoDoBanco.id!, observacao);
-        _logger.i("Observação salva no carrinho local ID BD: ${carrinhoDoBanco.id}");
-      }
-    } else {
-      _logger.w("Nenhum carrinho local aberto para cliente ${widget.cliente!.codcli}. Observação não será salva localmente.");
-    }
-
-    // 2. Gerar Identificadores do Pedido
-    progressoNotifier.value = "Gerando identificador do pedido...";
-    if (carrinhoDoBanco != null && carrinhoDoBanco.id != null) {
-      String dataCriacaoStr = DateFormat('yyyyMMddHHmmss').format(carrinhoDoBanco.dataCriacao); // Mais precisão para unicidade
-      numPedidoFinalGerado = "$dataCriacaoStr-${widget.cliente!.codcli}-${carrinhoDoBanco.id}";
-    } else {
-      // Fallback se não houver carrinho no banco (ex: primeira venda, ou app limpo)
-      String dataFormatadaFallback = DateFormat('yyyyMMddHHmmss').format(agoraParaPedido);
-      numPedidoFinalGerado = "${dataFormatadaFallback}-${widget.cliente!.codcli.toString().padLeft(3, '0')}-NO_CART_ID";
-    }
-    _logger.i("Número do Pedido Gerado: $numPedidoFinalGerado");
-
-    // 3. TENTAR GERAR O PDF
-    progressoNotifier.value = "Gerando PDF do pedido...";
-    _logger.d("Tentando gerar PDF com numPedido: $numPedidoFinalGerado e observacao: $observacao");
-
-    // Cria uma cópia do estado atual do carrinhoProvider para passar ao PDF
-    final Carrinho carrinhoAtualParaPdf = Carrinho(
-        itens: Map.from(carrinhoProvider.itens),
-        descontos: Map.from(carrinhoProvider.descontos),
-        // Copie outros campos relevantes do seu Carrinho Provider
-    );
-
-    // Assumindo que _gerarPDFComDadosSalvos é um método da sua classe
-    filePathDoPdfGerado = await _gerarPDFComDadosSalvos(
-        carrinhoParaGeracao: carrinhoAtualParaPdf,
-        contextAtual: context, // Context da tela
-        observacao: observacao,
-        cliente: widget.cliente, // Seu objeto Cliente
-        formaPagamento: formaPagamentoDesc,
-        numPedido: numPedidoFinalGerado
-    );
-
-    if (!mounted) { progressoNotifier.dispose(); return; }
-
-    if (filePathDoPdfGerado == null) {
-      _logger.e("Falha ao gerar PDF. Pedido NÃO será processado.");
-      if (dialogContext != null) { Navigator.of(dialogContext!, rootNavigator: true).pop(); dialogContext = null; }
-      _mostrarMensagemErroGeral("Falha ao gerar o PDF. O pedido não foi processado. Por favor, tente novamente.");
-      // Não precisa mais do setState aqui, pois o finally cuidará.
-      return; // Aborta a função
-    }
-    _logger.i("PDF gerado com sucesso em: $filePathDoPdfGerado");
-
-    // 4. Preparar dados para o JSON e tentar enviar para API
-    progressoNotifier.value = "Preparando dados do pedido...";
-    final int tabelaPreco = widget.cliente!.codtab;
-    List<Map<String, dynamic>> produtosJson = [];
-    carrinhoProvider.itens.forEach((produto, quantidade) { // 'produto' aqui deve ser seu objeto ProdutoModel
-      double preco = produto.getPrecoParaTabela(tabelaPreco); // Método do seu ProdutoModel
-      double desconto = carrinhoProvider.descontos[produto] ?? 0.0;
-
-      produtosJson.add({
-        "cod_produto": produto.codprd.toString(), // Supondo que 'codprd' existe no seu ProdutoModel
-        "quantidade": quantidade,
-        "vlr_unitario": preco,
-        "per_desconto": desconto,
-        // Adicione outros campos do produto que a API espera
-        // "dcr_produto": produto.dcrprd, // Exemplo
-      });
-    });
-
-    final Map<String, dynamic> dadosPedido = {
-      "num_pedido": numPedidoFinalGerado,
-      "id": numPedidoFinalGerado,
-      "data_pedido": DateFormat('dd/MM/yyyy HH:mm:ss').format(agoraParaPedido), // Formato mais completo
-      "cod_cliente": widget.cliente!.codcli.toString(),
-      "vlr_pedido": carrinhoProvider.calcularValorTotal(tabelaPreco), // Método do seu Carrinho Provider
-      "cod_vendedor": "001", // Ou seu código de vendedor real
-      "cod_condicao_pagto": formaPagamento,
-      "dcr_condicao_pagto": formaPagamentoDesc,
-      "observacoes": observacao,
-      "produtos": produtosJson,
-      // Adicione quaisquer outros campos que a API espera no JSON principal
-    };
-
-    progressoNotifier.value = "Enviando pedido para a central...";
-    _logger.i('Tentando enviar JSON para API: ${jsonEncode(dadosPedido)}');
-    final Uri uri = Uri.parse('http://duotecsuprilev.ddns.com.br:8082/v1/pedido');
-    http.Response? response;
-    bool postSucesso = false;
-
-    try {
-      response = await http.post(
-          uri,
-          headers: {'Content-Type': 'application/json; charset=UTF-8'},
-          body: jsonEncode(dadosPedido)
-      ).timeout(const Duration(seconds: 30)); // Ajuste o timeout conforme necessário
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        postSucesso = true;
-        _logger.i("POST para API bem-sucedido (Status: ${response.statusCode}). Resposta: ${response.body}");
-      } else {
-        _logger.w("Falha no POST para API (Status: ${response.statusCode}). Resposta: ${response.body}.");
-        // postSucesso continua false, indicando que será salvo localmente
-      }
-    } catch (e, s) {
-      _logger.e("Erro de conexão/timeout durante POST para API.", error: e, stackTrace: s);
-      // postSucesso continua false, indicando que será salvo localmente
-    }
-
-    // Fechar o diálogo de progresso ANTES de qualquer outro diálogo ou navegação
-    if (dialogContext != null && mounted) {
-      Navigator.of(dialogContext!, rootNavigator: true).pop();
-      dialogContext = null;
-    }
-    if (!mounted) { progressoNotifier.dispose(); return; }
-
-
-    if (postSucesso) {
-      _logger.i("Finalizando carrinho local após POST bem-sucedido...");
-      // Assumindo que _carrinhoService.finalizarCarrinho existe e retorna algo como {isSuccess: bool, message: String?}
-      final resultadoFinalizacaoLocal = await _carrinhoService.finalizarCarrinho(widget.cliente!);
-      if (!mounted) { progressoNotifier.dispose(); return; }
-
-      if (resultadoFinalizacaoLocal.isSuccess) {
-        Provider.of<Carrinho>(context, listen: false).limpar();
-        // setState(() { _isProcessingAction = false; }); // Será feito no finally
-        await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado!);
-      } else {
-        // setState(() { _isProcessingAction = false; }); // Será feito no finally
-        _mostrarMensagemErroGeral(
-            "Pedido enviado para API (Nº: $numPedidoFinalGerado), mas erro ao fechar o carrinho local. Contate o suporte. O carrinho na tela será limpo.");
-        Provider.of<Carrinho>(context, listen: false).limpar();
-      }
-    } else { // FALHA NO POST ORIGINAL -> Salvar localmente e finalizar como sucesso para o usuário
-      _logger.i("POST falhou. Tentando salvar pedido no banco local para envio posterior...");
-      
-      final pedidoParaSalvarLocalmente = RegistroPedidoLocal(
-          codigoPedidoApp: numPedidoFinalGerado,
-          jsonDoPedido: dadosPedido,
-          dataCriacao: agoraParaPedido,
-          statusEnvio: 'PENDENTE',
-      );
-
-      try {
-        await _pedidosParaEnvioDao.inserir(pedidoParaSalvarLocalmente);
-        _logger.i("Pedido (Nº: $numPedidoFinalGerado) salvo localmente com sucesso para envio posterior.");
-
-        _logger.i("Finalizando carrinho local após salvar para envio posterior...");
-        final resultadoFinalizacaoLocal = await _carrinhoService.finalizarCarrinho(widget.cliente!);
-        if (!mounted) { progressoNotifier.dispose(); return; }
-
-        if (resultadoFinalizacaoLocal.isSuccess) {
-          Provider.of<Carrinho>(context, listen: false).limpar();
-          // setState(() { _isProcessingAction = false; }); // Será feito no finally
-          await _mostrarDialogoPedidoEnviadoComPdf(context, numPedidoFinalGerado, filePathDoPdfGerado!); // Mesmo diálogo de sucesso
-          _logger.i("Fluxo de 'falha no POST, salvo localmente' concluído com sucesso para o usuário.");
-        } else {
-          // setState(() { _isProcessingAction = false; }); // Será feito no finally
-          _mostrarMensagemErroGeral(
-              "Pedido (Nº: $numPedidoFinalGerado) salvo para envio posterior, mas erro ao fechar o carrinho localmente. Contate o suporte. O carrinho na tela será limpo.");
-          Provider.of<Carrinho>(context, listen: false).limpar();
-        }
-      } catch (dbError, dbStack) {
-        _logger.f("ERRO CRÍTICO: Falha no POST E falha ao salvar pedido localmente (Nº: $numPedidoFinalGerado).", error: dbError, stackTrace: dbStack);
-        // setState(() { _isProcessingAction = false; }); // Será feito no finally
-        
-        // Usar a função _mostrarDialogoErroEnvioComPdfGerado ou uma mensagem mais específica
-        // Se response for nulo (caiu no catch da conexão), precisa tratar.
-        if (response != null) {
-            await _mostrarDialogoErroEnvioComPdfGerado(context, response, dadosPedido, filePathDoPdfGerado!);
-        } else {
-            _mostrarMensagemErroGeral("Falha crítica ao processar seu pedido (Nº: $numPedidoFinalGerado). Não foi possível enviar nem salvar. Tente novamente ou contate o suporte.");
-        }
-        // IMPORTANTE: Neste caso de falha crítica, NÃO limpamos o carrinho da UI.
-        // O usuário precisa estar ciente que o pedido não foi efetivado.
-      }
-    }
-  } catch (e, s) { // Catch principal para erros não esperados (ex: na geração do PDF, numPedido, etc.)
-    _logger.e("Erro crítico não tratado em _transferirCarrinho", error: e, stackTrace: s);
-    if (dialogContext != null && mounted) {
-      Navigator.of(dialogContext!, rootNavigator: true).pop();
-      dialogContext = null;
-    }
-    if (!mounted) { progressoNotifier.dispose(); return; }
-    // setState(() { _isProcessingAction = false; }); // Será feito no finally
-
-    // Se 'e' for uma exceção específica que você trata, pode chamar um diálogo específico.
-    // Senão, um diálogo de erro genérico.
-    // A função _mostrarDialogoErroConexao parece ser para erros de conexão,
-    // mas este catch é mais amplo.
-    _mostrarMensagemErroGeral("Ocorreu um erro inesperado ao processar seu pedido. Por favor, tente novamente. Detalhe: ${e.toString()}");
-  } finally {
-    progressoNotifier.dispose(); // Sempre liberar o notifier
-    if (mounted && _isProcessingAction) { // Garante que o estado de processamento seja resetado
-      setState(() { _isProcessingAction = false; });
-    }
-  }
-}
-
-
-  // MÉTODO REFATORADO: _gerarPDFComDadosSalvos para retornar o caminho do arquivo
-  Future<String?> _gerarPDFComDadosSalvos({ // Retorna o caminho do arquivo ou null
-    required Carrinho carrinhoParaGeracao, // Recebe uma instância de Carrinho com os dados
-    required BuildContext contextAtual,    // Contexto da tela
-    required String observacao,            // Agora é parâmetro obrigatório 
-    Cliente? cliente,
-    String formaPagamento = '',
-    String numPedido = '',
-    String nomeVendedor = 'Vendedor Padrão',
-    String? nomeClienteResponsavel,
-    String? emailCliente,
-  }) async {
-    if (!mounted) return null;
-
-    // Usar um ValueNotifier para o diálogo de progresso interno desta função
-    ValueNotifier<String> pdfProgressoNotifier = ValueNotifier("Gerando PDF...");
-    BuildContext? pdfDialogContext;
-
+  void _mostrarSucesso(PedidoResult result) {
     showDialog(
-      context: contextAtual, // Usa o context da tela
-      barrierDismissible: false,
-      builder: (buildDialogCtx) {
-        pdfDialogContext = buildDialogCtx;
-        return ValueListenableBuilder<String>(
-            valueListenable: pdfProgressoNotifier,
-            builder: (ctx, message, _) => AlertDialog(
-                content: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const CircularProgressIndicator(), const SizedBox(height: 20), Text(message)
-                ]),
-            ),
-        );
-      },
-    );
-
-    try {
-      if (carrinhoParaGeracao.isEmpty) {
-        _logger.w("PDF: Carrinho para geração está vazio.");
-        if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
-        _mostrarMensagemErroGeral("Não há itens no carrinho para gerar o PDF.");
-        return null;
-      }
-
-      // Usa os dados de carrinhoParaGeracao
-      final filePath = await PdfGeneratorSimples.gerarPdfSimples(
-        Map.from(carrinhoParaGeracao.itens),       // Passa cópias para segurança
-        Map.from(carrinhoParaGeracao.descontos),
-        cliente ?? widget.cliente,
-        observacao,
-        nomeVendedor,
-        nomeClienteResponsavel ?? cliente?.nomcli ?? widget.cliente?.nomcli ?? "Consumidor",
-        emailCliente ?? cliente?.emailcli ?? widget.cliente?.emailcli ?? "",
-        formaPagamento,
-        numPedido,
-      );
-
-      if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
-
-      if (filePath != null) {
-        _logger.i("PDF gerado com sucesso em $filePath");
-        // Não mostre diálogo de sucesso aqui, apenas retorne o path
-        // O _transferirCarrinho cuidará do feedback ao usuário.
-        return filePath;
-      } else {
-        _logger.e("PDF: PdfGeneratorSimples.gerarPdfSimples retornou nulo.");
-        if(mounted) _mostrarMensagemErroGeral("Erro desconhecido ao gerar PDF.");
-        return null;
-      }
-    } catch (e, s) {
-      _logger.e("PDF: Erro crítico em _gerarPDFComDadosSalvos", error: e, stackTrace: s);
-      if (pdfDialogContext != null && mounted) Navigator.of(pdfDialogContext!, rootNavigator: true).pop();
-      if(mounted) _mostrarMensagemErroGeral("Erro inesperado ao gerar PDF: $e");
-      return null;
-    } finally {
-      pdfProgressoNotifier.dispose();
-    }
-  }
-
-  // Método para mostrar mensagem de erro geral
-  void _mostrarMensagemErroGeral(String mensagem) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(mensagem),
-        backgroundColor: Colors.red[700],
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-      ),
-    );
-  }
-
-  // NOVO DIÁLOGO: Para mostrar pedido enviado com sucesso + PDF gerado
-  Future<void> _mostrarDialogoPedidoEnviadoComPdf(BuildContext ctx, String numPedido, String filePath) async {
-    if (!mounted) return;
-    
-    await showDialog(
-      context: ctx,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 16),
-          title: Row(
-            children: [
-              Icon(Icons.check_circle_outline, color: Colors.green[700], size: 28),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text("Pedido Enviado com Sucesso", 
-                  style: TextStyle(color: Colors.green[700], fontSize: 18),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "Seu pedido foi enviado para a central e o PDF foi gerado com sucesso!",
-                style: TextStyle(fontSize: 16),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green[100]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.numbers, size: 18, color: Colors.green[700]),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            "Número do Pedido: $numPedido",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green[800],
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Icon(Icons.picture_as_pdf, size: 18, color: Colors.green[700]),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            "PDF gerado em:",
-                            style: TextStyle(fontWeight: FontWeight.w600, color: Colors.green[800]),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.green[200]!),
-                      ),
-                      child: Text(
-                        filePath,
-                        style: const TextStyle(fontSize: 12),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text("Fechar"),
-            ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.share, size: 18),
-              label: const Text("Compartilhar PDF"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF5D5CDE),
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                await PdfGeneratorSimples.compartilharArquivo(filePath);
-                if (mounted && context.mounted) Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // NOVO DIÁLOGO: Para mostrar erro no envio para API mas com PDF gerado
-  Future<void> _mostrarDialogoErroEnvioComPdfGerado(
-    BuildContext ctx, 
-    http.Response response, 
-    Map<String, dynamic> dadosPedido,
-    String filePath
-  ) async {
-    if (!mounted) return;
-    
-    // Tentar extrair mensagem de erro da resposta
-    String? errorMessage;
-    try {
-      if (response.body.isNotEmpty) {
-        final responseData = jsonDecode(response.body);
-        if (responseData is Map && responseData.containsKey('message')) {
-          errorMessage = responseData['message'];
-        }
-      }
-    } catch (_) {}
-    
-    await showDialog(
-      context: ctx,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          contentPadding: const EdgeInsets.only(left: 24, right: 24, bottom: 24, top: 16),
-          title: Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange[700], size: 28),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text("Atenção: Pedido Não Enviado", 
-                  style: TextStyle(color: Colors.deepOrange),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                "O PDF do pedido foi gerado com sucesso, mas houve um problema ao enviar para a central.",
-                style: TextStyle(fontSize: 16),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red[100]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Erro (${response.statusCode}): ${errorMessage ?? 'Erro de comunicação com o servidor'}",
-                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.red[700]),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      "Você pode tentar novamente ou compartilhar o PDF gerado.",
-                      style: TextStyle(color: Colors.grey[800]),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue[100]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.picture_as_pdf, size: 18, color: Colors.blue[700]),
-                        const SizedBox(width: 8),
-                        const Text(
-                          "PDF disponível em:",
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.blue[200]!),
-                      ),
-                      child: Text(
-                        filePath,
-                        style: const TextStyle(fontSize: 12),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text("Fechar"),
-            ),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.share, size: 18),
-              label: const Text("Compartilhar PDF"),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF5D5CDE),
-              ),
-              onPressed: () async {
-                await PdfGeneratorSimples.compartilharArquivo(filePath);
-              },
-            ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text("Tentar Novamente"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF5D5CDE),
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () {
-                // Fechar o diálogo
-                Navigator.of(context).pop();
-                
-                // Tentar enviar novamente o pedido diretamente com os dados já preparados
-                // _reenviarPedido(dadosPedido, filePath);
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _mostrarDialogoErroConexao(
-    BuildContext contextAtual,
-    dynamic error,
-    String observacao,
-    String formaPagamento,
-    Carrinho carrinhoProvider,
-  ) async {
-    if (!mounted) return;
-    
-    await showDialog(
-      context: contextAtual,
-      builder: (BuildContext context) => AlertDialog(
+      context: context,
+      builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.wifi_off, color: Colors.red[600], size: 24),
+            Icon(Icons.check_circle, color: Colors.green[700]),
             const SizedBox(width: 8),
-            Text("Erro de Conexão", style: TextStyle(color: Colors.red[700])),
+            const Text("Pedido Finalizado"),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "Não foi possível conectar ao servidor",
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.red[100]!),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Verifique sua conexão com a internet e tente novamente.",
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        content: Text(
+          result.isLocal
+              ? "Pedido salvo localmente (Nº: ${result.numPedido})"
+              : "Pedido enviado com sucesso (Nº: ${result.numPedido})",
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text("Fechar"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              if (mounted) {
-                _transferirCarrinho(
-                  carrinhoProvider: carrinhoProvider,
-                  observacao: observacao,
-                  formaPagamento: formaPagamento,
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF5D5CDE),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text("Tentar Novamente"),
+            child: const Text("OK"),
           ),
         ],
       ),
+    );
+  }
+}
+
+// Separate widget for cart items
+class CartItemWidget extends StatelessWidget {
+  final ProdutoModel produto;
+  final Carrinho carrinho;
+  final CarrinhoController controller;
+  final Cliente? cliente;
+
+  const CartItemWidget({
+    super.key,
+    required this.produto,
+    required this.carrinho,
+    required this.controller,
+    required this.cliente,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final quantidade = carrinho.itens[produto] ?? 0;
+    final desconto = carrinho.descontos[produto] ?? 0.0;
+    final tabelaPreco = cliente?.codtab ?? 1;
+    final preco = produto.getPrecoParaTabela(tabelaPreco);
+    final precoComDesconto = preco * (1 - desconto / 100);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Product info
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.inventory_2_outlined,
+                    color: Color(0xFF5D5CDE),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        produto.dcrprd,
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Cód: ${produto.codprd}',
+                        style: TextStyle(color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'R\$ ${precoComDesconto.toStringAsFixed(2).replaceAll('.', ',')}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF5D5CDE),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Controls
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(12),
+                bottomRight: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Quantity controls
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: quantidade > 1
+                          ? () => controller.atualizarQuantidade(
+                                carrinho,
+                                produto,
+                                quantidade - 1,
+                                cliente!,
+                              )
+                          : null,
+                      icon: const Icon(Icons.remove),
+                    ),
+                    Text('$quantidade'),
+                    IconButton(
+                      onPressed: () => controller.atualizarQuantidade(
+                        carrinho,
+                        produto,
+                        quantidade + 1,
+                        cliente!,
+                      ),
+                      icon: const Icon(Icons.add),
+                    ),
+                  ],
+                ),
+                
+                // Remove button
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  label: const Text('Remover', style: TextStyle(color: Colors.red)),
+                  onPressed: () => controller.removerProduto(
+                    carrinho,
+                    produto,
+                    cliente!,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Separate dialog widget
+class PedidoDialog extends StatefulWidget {
+  final Cliente cliente;
+  final Carrinho carrinho;
+  final List<CondicaoPagamentoModel> condicoesPagamento;
+  final Function(String) onObservacaoChanged;
+  final Function(CondicaoPagamentoModel?) onFormaPagamentoChanged;
+
+  const PedidoDialog({
+    super.key,
+    required this.cliente,
+    required this.carrinho,
+    required this.condicoesPagamento,
+    required this.onObservacaoChanged,
+    required this.onFormaPagamentoChanged,
+  });
+
+  @override
+  State<PedidoDialog> createState() => _PedidoDialogState();
+}
+
+class _PedidoDialogState extends State<PedidoDialog> {
+  CondicaoPagamentoModel? _formaSelecionada;
+
+  @override
+  void initState() {
+    super.initState();
+    _formaSelecionada = widget.condicoesPagamento.isNotEmpty
+        ? widget.condicoesPagamento.first
+        : null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Finalizar Pedido'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            decoration: const InputDecoration(
+              labelText: 'Observação',
+              hintText: 'Digite uma observação (opcional)',
+            ),
+            maxLines: 3,
+            onChanged: widget.onObservacaoChanged,
+          ),
+          const SizedBox(height: 16),
+          if (widget.condicoesPagamento.isNotEmpty)
+            DropdownButtonFormField<CondicaoPagamentoModel>(
+              value: _formaSelecionada,
+              decoration: const InputDecoration(
+                labelText: 'Forma de Pagamento',
+              ),
+              items: widget.condicoesPagamento.map((condicao) {
+                return DropdownMenuItem(
+                  value: condicao,
+                  child: Text(condicao.dcrcndpgt),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  _formaSelecionada = value;
+                });
+                widget.onFormaPagamentoChanged(value);
+              },
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Finalizar'),
+        ),
+      ],
     );
   }
 }

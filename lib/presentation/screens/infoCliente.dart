@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_docig_venda/services/dao/carrinho_dao.dart';
-import 'package:flutter_docig_venda/presentation/widgets/botao.dart';
+import 'package:flutter_docig_venda/data/repositories/all_repositories.dart';
 import 'package:flutter_docig_venda/presentation/screens/produtoScreen.dart';
 import 'package:flutter_docig_venda/data/models/duplicata_model.dart';
 import 'package:flutter_docig_venda/data/models/cliente_model.dart';
@@ -12,6 +11,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'dart:developer' as developer;
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
+import 'package:flutter_docig_venda/data/datasources/local/database_helper.dart';
 
 class Infocliente extends StatefulWidget {
   final Cliente cliente;
@@ -23,21 +23,51 @@ class Infocliente extends StatefulWidget {
 }
 
 class _InfoclienteState extends State<Infocliente> {
-  final CarrinhosDao carrinhoDao = CarrinhosDao();
+  // Repository em vez de DAO
+  CarrinhoRepository? _carrinhoRepository;
+  
   final Color primaryColor = const Color(0xFF5D5CDE);
   final Color secondaryColor = const Color(0xFF7472E0);
   
   bool _isLoadingDuplicatas = false;
   List<Duplicata>? _duplicatasCache;
+  bool _isInitialized = false;
+  bool _isDisposed = false;
 
   @override
   void initState() {
     super.initState();
-    // Pré-carregar duplicatas para uso posterior
-    _precarregarDuplicatas();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isDisposed) {
+        _initializeRepository();
+        _precarregarDuplicatas();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
+
+  void _initializeRepository() {
+    if (_isDisposed) return;
+    
+    // Sempre usa instância local para garantir funcionamento
+    try {
+      _carrinhoRepository = CarrinhoRepository(DatabaseHelper.instance);
+      _isInitialized = true;
+      developer.log("Repository inicializado localmente com sucesso", name: 'Infocliente');
+    } catch (e) {
+      developer.log("Erro ao criar repository local: $e", name: 'Infocliente');
+      _isInitialized = false;
+    }
   }
 
   Future<void> _precarregarDuplicatas() async {
+    if (_isDisposed) return;
+    
     if (mounted) {
       setState(() {
         _isLoadingDuplicatas = true;
@@ -47,9 +77,9 @@ class _InfoclienteState extends State<Infocliente> {
     try {
       _duplicatasCache = await _buscarDuplicatasDoCliente(widget.cliente.codcli);
     } catch (e) {
-      developer.log("❌ Erro ao pré-carregar duplicatas: $e", name: 'Infocliente');
+      developer.log("Erro ao pré-carregar duplicatas: $e", name: 'Infocliente');
     } finally {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _isLoadingDuplicatas = false;
         });
@@ -57,9 +87,7 @@ class _InfoclienteState extends State<Infocliente> {
     }
   }
 
-  // Método para buscar duplicatas do cliente da API
   Future<List<Duplicata>> _buscarDuplicatasDoCliente(int codcli) async {
-    // Retorna o cache se disponível
     if (_duplicatasCache != null) {
       return _duplicatasCache!;
     }
@@ -71,44 +99,42 @@ class _InfoclienteState extends State<Infocliente> {
       final response = await http.get(
         url,
         headers: {"Content-Type": "application/json"},
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         List<dynamic> jsonResponse = json.decode(response.body);
         return jsonResponse.map((item) => Duplicata.fromJson(item)).toList();
       } else {
         developer.log(
-            "❌ Erro ${response.statusCode} ao buscar duplicatas: ${response.body}",
-            name: 'Infocliente');
+          "Erro ${response.statusCode} ao buscar duplicatas: ${response.body}",
+          name: 'Infocliente'
+        );
         return [];
       }
     } catch (e) {
-      developer.log("❌ Erro na requisição: $e", name: 'Infocliente');
+      developer.log("Erro na requisição: $e", name: 'Infocliente');
       return [];
     }
   }
 
-  // Formatar valores monetários
   String formatarValor(double valor) {
     return "R\$ ${valor.toStringAsFixed(2).replaceAll('.', ',')}";
   }
 
-  // Formatar CNPJ/CPF
   String formatarDocumento(String documento) {
     if (documento.isEmpty) return "Não informado";
 
+    documento = documento.replaceAll(RegExp(r'[^0-9]'), '');
+
     if (documento.length == 14) {
-      // CNPJ
       return "${documento.substring(0, 2)}.${documento.substring(2, 5)}.${documento.substring(5, 8)}/${documento.substring(8, 12)}-${documento.substring(12)}";
     } else if (documento.length == 11) {
-      // CPF
       return "${documento.substring(0, 3)}.${documento.substring(3, 6)}.${documento.substring(6, 9)}-${documento.substring(9)}";
     }
 
     return documento;
   }
 
-  // Manipuladores de eventos
   Future<void> _handleTelefonePress(String telefone) async {
     if (telefone.isEmpty) return;
     
@@ -118,12 +144,12 @@ class _InfoclienteState extends State<Infocliente> {
       if (await url_launcher.canLaunchUrl(telUri)) {
         await url_launcher.launchUrl(telUri);
       } else {
-        if (mounted) {
+        if (mounted && !_isDisposed) {
           _mostrarSnackBar('Não foi possível realizar a chamada telefônica.');
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         _mostrarSnackBar('Erro ao tentar ligar: $e');
       }
     }
@@ -138,12 +164,12 @@ class _InfoclienteState extends State<Infocliente> {
       if (await url_launcher.canLaunchUrl(emailUri)) {
         await url_launcher.launchUrl(emailUri);
       } else {
-        if (mounted) {
+        if (mounted && !_isDisposed) {
           _mostrarSnackBar('Não foi possível abrir o aplicativo de e-mail.');
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         _mostrarSnackBar('Erro ao tentar enviar e-mail: $e');
       }
     }
@@ -157,48 +183,43 @@ class _InfoclienteState extends State<Infocliente> {
       if (await url_launcher.canLaunchUrl(mapsUri)) {
         await url_launcher.launchUrl(mapsUri, mode: url_launcher.LaunchMode.externalApplication);
       } else {
-        if (mounted) {
+        if (mounted && !_isDisposed) {
           _mostrarSnackBar('Não foi possível abrir o mapa.');
         }
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         _mostrarSnackBar('Erro ao tentar abrir o mapa: $e');
       }
     }
   }
 
   void _handleDuplicatasButtonPress(BuildContext context) async {
-    // Utilizar o cache se disponível, caso contrário, buscar novamente
+    if (_isDisposed) return;
+    
     if (_isLoadingDuplicatas) {
       _mostrarSnackBar('Carregando duplicatas, aguarde um momento...');
       return;
     }
 
-    // Mostrar indicador de carregamento apenas se não tivermos cache
     if (_duplicatasCache == null) {
       setState(() {
         _isLoadingDuplicatas = true;
       });
       
-      // Mostrar overlay de carregamento
       _mostrarCarregamento(context);
     }
 
     try {
-      // Buscar duplicatas da API se necessário
       final duplicatas = _duplicatasCache ?? await _buscarDuplicatasDoCliente(widget.cliente.codcli);
-      _duplicatasCache = duplicatas; // Atualizar o cache
+      _duplicatasCache = duplicatas;
 
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
+      if (!context.mounted || _isDisposed) return;
       
-      // Fechar o indicador de carregamento se estiver aberto
       if (_duplicatasCache == null && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
 
-      // Criar duplicata para navegação
       final Duplicata duplicataToUse = duplicatas.isNotEmpty
           ? duplicatas[0]
           : Duplicata(
@@ -208,7 +229,6 @@ class _InfoclienteState extends State<Infocliente> {
               vlrdpl: 0,
             );
 
-      // Navegar para a tela de duplicatas
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -219,18 +239,14 @@ class _InfoclienteState extends State<Infocliente> {
         ),
       );
     } catch (e) {
-      // Verificar se o contexto ainda é válido
-      if (!context.mounted) return;
+      if (!context.mounted || _isDisposed) return;
       
-      // Fechar o indicador de carregamento se estiver aberto
       if (_duplicatasCache == null && Navigator.canPop(context)) {
         Navigator.pop(context);
       }
 
-      // Mostrar erro
       _mostrarSnackBar("Erro ao buscar duplicatas: $e");
 
-      // Criar duplicata temporária
       final duplicataTemp = Duplicata(
         numdoc: "NOVA",
         codcli: widget.cliente.codcli,
@@ -238,7 +254,6 @@ class _InfoclienteState extends State<Infocliente> {
         vlrdpl: 0,
       );
 
-      // Navegar para a tela de duplicatas
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -249,7 +264,7 @@ class _InfoclienteState extends State<Infocliente> {
         ),
       );
     } finally {
-      if (mounted) {
+      if (mounted && !_isDisposed) {
         setState(() {
           _isLoadingDuplicatas = false;
         });
@@ -257,73 +272,66 @@ class _InfoclienteState extends State<Infocliente> {
     }
   }
 
-  void _handleProdutosButtonPress(BuildContext context) async {
+  void _handleProdutosButtonPress(BuildContext context) {
+    if (_isDisposed) return;
+    
     try {
-      await carrinhoDao.getCarrinhoAberto(widget.cliente.codcli);
-
-      if (!context.mounted) return;
+      // Verificar se o context ainda é válido
+      if (!mounted) return;
       
-      // Limpar o carrinho ANTES de navegar
-      final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-      carrinhoProvider.limpar();
-      
-      // Log para debugging
-      developer.log("CarrinhoProvider limpo ANTES de navegar para ProdutoScreen do cliente ${widget.cliente.codcli}",
-        name: 'Infocliente');
+      // Adicionar log para debug
+      developer.log("Navegando para produtos - Cliente: ${widget.cliente.codcli}", name: 'Infocliente');
       
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => ProdutoScreen(cliente: widget.cliente),
+          builder: (context) => ProdutoScreenWrapper(cliente: widget.cliente),
         ),
-      );
+      ).catchError((error) {
+        developer.log("Erro na navegação push: $error", name: 'Infocliente');
+        if (mounted && !_isDisposed) {
+          _mostrarSnackBar("Erro ao abrir tela de produtos: $error");
+        }
+        return null;
+      });
     } catch (e) {
-      _mostrarSnackBar("Erro ao preparar produtos: $e");
+      _mostrarSnackBar("Erro ao navegar para produtos: $e");
+      developer.log("Erro na navegação para produtos: $e", name: 'Infocliente');
     }
   }
 
   void _handleAdicionarProdutoPress(BuildContext context) {
-    try {
-      // Limpar o carrinho ANTES de qualquer navegação que lide com produtos
-      final carrinhoProvider = Provider.of<Carrinho>(context, listen: false);
-      carrinhoProvider.limpar();
-      
-      developer.log("CarrinhoProvider limpo ANTES de adicionar produto individual para cliente ${widget.cliente.codcli}",
-        name: 'Infocliente');
-      
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => AdicionarProdutoScreen(cliente: widget.cliente),
-        ),
-      );
-    } catch (e) {
-      _mostrarSnackBar("Erro ao navegar para adição de produto: $e");
-    }
-  }
-
-  void _mostrarSnackBar(String mensagem) {
+    if (_isDisposed) return;
+    
     if (!mounted) return;
     
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(mensagem),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: Colors.grey[800],
-        duration: const Duration(seconds: 3),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () {
-            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          },
-        ),
+    // Use o wrapper se você quiser limpar o carrinho
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AdicionarProdutoScreenWrapper(cliente: widget.cliente),
       ),
     );
   }
+
+  void _mostrarSnackBar(String mensagem) {
+    if (!mounted || _isDisposed) return;
+    
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(mensagem),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.grey[800],
+          duration: const Duration(seconds: 3),
+        ),
+      );
+  }
   
   void _mostrarCarregamento(BuildContext context) {
+    if (_isDisposed) return;
+    
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -340,16 +348,9 @@ class _InfoclienteState extends State<Infocliente> {
               children: [
                 CircularProgressIndicator(
                   valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
-                  strokeWidth: 3,
                 ),
                 const SizedBox(height: 16),
-                const Text(
-                  "Carregando dados...",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                const Text("Carregando dados..."),
               ],
             ),
           ),
@@ -369,24 +370,21 @@ class _InfoclienteState extends State<Infocliente> {
         ),
         backgroundColor: primaryColor,
         elevation: 2,
+        iconTheme: const IconThemeData(color: Colors.white),
         actions: [
-          // Botão para compartilhar informações do cliente
           IconButton(
             icon: const Icon(Icons.share, color: Colors.white),
-            tooltip: 'Compartilhar dados do cliente',
-            onPressed: () {
-              // Implementação futura
-              _mostrarSnackBar('Compartilhar dados do cliente');
-            },
+            tooltip: 'Compartilhar',
+            onPressed: () => _mostrarSnackBar('Compartilhar dados do cliente'),
           ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          // Recarregar duplicatas ao fazer pull-to-refresh
+          if (_isDisposed) return;
           _duplicatasCache = null;
           await _precarregarDuplicatas();
-          if (mounted) {
+          if (mounted && !_isDisposed) {
             _mostrarSnackBar('Dados atualizados');
           }
         },
@@ -394,9 +392,8 @@ class _InfoclienteState extends State<Infocliente> {
         child: CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
-            // Cabeçalho com informações principais
             SliverPersistentHeader(
-              pinned: true, // Mantém o cabeçalho visível ao rolar
+              pinned: true,
               delegate: _ClienteHeaderDelegate(
                 cliente: widget.cliente,
                 primaryColor: primaryColor,
@@ -411,7 +408,6 @@ class _InfoclienteState extends State<Infocliente> {
           ],
         ),
       ),
-      // Botão de ação flutuante para iniciar um novo pedido
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _handleProdutosButtonPress(context),
         backgroundColor: primaryColor,
@@ -429,10 +425,8 @@ class _InfoclienteState extends State<Infocliente> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cartões informativos
           _buildInformationCards(),
           
-          // Informações do cliente
           const SizedBox(height: 8),
           _buildSectionTitle("Informações de Contato"),
           _buildContactInfo(),
@@ -448,7 +442,6 @@ class _InfoclienteState extends State<Infocliente> {
           const SizedBox(height: 24),
           _buildActionButtons(),
           
-          // Espaço adicional no final para não cobrir o conteúdo com o FAB
           const SizedBox(height: 80),
         ],
       ),
@@ -460,7 +453,6 @@ class _InfoclienteState extends State<Infocliente> {
       padding: const EdgeInsets.only(top: 8.0),
       child: Row(
         children: [
-          // Status do cliente
           Expanded(
             child: _buildInfoCard(
               icon: Icons.person_outlined,
@@ -470,7 +462,6 @@ class _InfoclienteState extends State<Infocliente> {
             ),
           ),
           const SizedBox(width: 8),
-          // Limite de crédito
           Expanded(
             child: _buildInfoCard(
               icon: Icons.credit_card_outlined,
@@ -512,7 +503,7 @@ class _InfoclienteState extends State<Infocliente> {
       elevation: 2,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey[200]!, width: 1),
+        side: BorderSide(color: Colors.grey[200]!),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12.0),
@@ -578,17 +569,15 @@ class _InfoclienteState extends State<Infocliente> {
   Widget _buildContactInfo() {
     return Card(
       elevation: 1,
-      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey[200]!, width: 1),
+        side: BorderSide(color: Colors.grey[200]!),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Telefone principal
             _buildContactItem(
               icon: Icons.phone,
               label: "Telefone",
@@ -686,40 +675,28 @@ class _InfoclienteState extends State<Infocliente> {
     
     return Card(
       elevation: 1,
-      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey[200]!, width: 1),
+        side: BorderSide(color: Colors.grey[200]!),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _buildAddressField("Logradouro", widget.cliente.endcli),
+            const SizedBox(height: 12),
+            _buildAddressField("Bairro", widget.cliente.baicli),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildAddressField("Logradouro", widget.cliente.endcli),
-                      const SizedBox(height: 12),
-                      _buildAddressField("Bairro", widget.cliente.baicli),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildAddressField("Cidade", widget.cliente.muncli),
-                          ),
-                          const SizedBox(width: 16),
-                          SizedBox(
-                            width: 80,
-                            child: _buildAddressField("UF", widget.cliente.ufdcli),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                  child: _buildAddressField("Cidade", widget.cliente.muncli),
+                ),
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 80,
+                  child: _buildAddressField("UF", widget.cliente.ufdcli),
                 ),
               ],
             ),
@@ -775,16 +752,14 @@ class _InfoclienteState extends State<Infocliente> {
   Widget _buildFinancialInfo() {
     return Card(
       elevation: 1,
-      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: Colors.grey[200]!, width: 1),
+        side: BorderSide(color: Colors.grey[200]!),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // Primeira linha
             Row(
               children: [
                 Expanded(
@@ -805,7 +780,6 @@ class _InfoclienteState extends State<Infocliente> {
               ],
             ),
             const SizedBox(height: 16),
-            // Segunda linha
             Row(
               children: [
                 Expanded(
@@ -823,27 +797,6 @@ class _InfoclienteState extends State<Infocliente> {
                     formatarValor(widget.cliente.vlrdplats),
                     Icons.assignment_late,
                     color: widget.cliente.vlrdplats > 0 ? Colors.red[700] : null,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // Terceira linha
-            Row(
-              children: [
-                Expanded(
-                  child: _buildFinancialItem(
-                    "Condição de Pagamento",
-                    "Código: ${widget.cliente.codcndpgt}",
-                    Icons.payment,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildFinancialItem(
-                    "Tabela de Preço",
-                    "Código: ${widget.cliente.codtab}",
-                    Icons.list_alt,
                   ),
                 ),
               ],
@@ -876,11 +829,7 @@ class _InfoclienteState extends State<Infocliente> {
           const SizedBox(height: 8),
           Row(
             children: [
-              Icon(
-                icon, 
-                size: 18, 
-                color: color ?? primaryColor,
-              ),
+              Icon(icon, size: 18, color: color ?? primaryColor),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -976,7 +925,170 @@ class _InfoclienteState extends State<Infocliente> {
   }
 }
 
-// Classe para o cabeçalho persistente com efeito de colapso
+// Wrappers seguros para navegação
+// PARTE MODIFICADA: Apenas os wrappers que estão causando o problema
+
+// WRAPPER CORRIGIDO - SEM LOOP INFINITO
+class ProdutoScreenWrapper extends StatefulWidget {
+  final Cliente cliente;
+
+  const ProdutoScreenWrapper({super.key, required this.cliente});
+
+  @override
+  State<ProdutoScreenWrapper> createState() => _ProdutoScreenWrapperState();
+}
+
+class _ProdutoScreenWrapperState extends State<ProdutoScreenWrapper> {
+  bool _isDisposed = false;
+  bool _carrinhoLimpo = false; // CRÍTICO: Flag para controlar limpeza única
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    developer.log("ProdutoScreenWrapper iniciado para cliente ${widget.cliente.codcli}", 
+        name: 'ProdutoScreenWrapper');
+    
+    try {
+      // Verificar se Provider está disponível
+      final carrinho = Provider.of<Carrinho>(context, listen: false);
+      developer.log("Provider<Carrinho> encontrado", name: 'ProdutoScreenWrapper');
+      
+      // CRÍTICO: Limpa carrinho apenas UMA VEZ
+      if (!_carrinhoLimpo && !_isDisposed) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_isDisposed && mounted && !_carrinhoLimpo) {
+            try {
+              developer.log("Limpando carrinho uma única vez...", name: 'ProdutoScreenWrapper');
+              carrinho.limpar();
+              _carrinhoLimpo = true; // MARCA COMO LIMPO
+              developer.log("Carrinho limpo com sucesso", name: 'ProdutoScreenWrapper');
+            } catch (e) {
+              developer.log("Erro ao limpar carrinho: $e", name: 'ProdutoScreenWrapper');
+            }
+          }
+        });
+      }
+      
+    } catch (e) {
+      developer.log("ERRO: Provider<Carrinho> não encontrado: $e", name: 'ProdutoScreenWrapper');
+      return _buildErrorScreen("Provider<Carrinho> não encontrado", "$e");
+    }
+    
+    // CRÍTICO: Retorna diretamente sem Consumer
+    try {
+      developer.log("Criando ProdutoScreen diretamente...", name: 'ProdutoScreenWrapper');
+      return ProdutoScreen(cliente: widget.cliente);
+    } catch (e) {
+      developer.log("ERRO ao criar ProdutoScreen: $e", name: 'ProdutoScreenWrapper');
+      return _buildErrorScreen("Erro ao carregar tela de produtos", "$e");
+    }
+  }
+
+  Widget _buildErrorScreen(String title, String message) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Erro - $title"),
+        backgroundColor: const Color(0xFF5D5CDE),
+        iconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(title),
+            const SizedBox(height: 8),
+            Text(message, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Voltar"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// WRAPPER ADICIONAL TAMBÉM CORRIGIDO
+class AdicionarProdutoScreenWrapper extends StatefulWidget {
+  final Cliente cliente;
+
+  const AdicionarProdutoScreenWrapper({super.key, required this.cliente});
+
+  @override
+  State<AdicionarProdutoScreenWrapper> createState() => _AdicionarProdutoScreenWrapperState();
+}
+
+class _AdicionarProdutoScreenWrapperState extends State<AdicionarProdutoScreenWrapper> {
+  bool _isDisposed = false;
+  bool _carrinhoLimpo = false;
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    try {
+      final carrinho = Provider.of<Carrinho>(context, listen: false);
+      
+      // Limpa carrinho apenas uma vez
+      if (!_carrinhoLimpo && !_isDisposed) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_isDisposed && mounted && !_carrinhoLimpo) {
+            try {
+              carrinho.limpar();
+              _carrinhoLimpo = true;
+              developer.log("Carrinho limpo para adicionar produto individual", 
+                  name: 'AdicionarProdutoScreenWrapper');
+            } catch (e) {
+              developer.log("Erro ao limpar carrinho: $e", name: 'AdicionarProdutoScreenWrapper');
+            }
+          }
+        });
+      }
+      
+      return AdicionarProdutoScreen(cliente: widget.cliente);
+      
+    } catch (e) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Erro"),
+          backgroundColor: const Color(0xFF5D5CDE),
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text("Erro ao acessar carrinho"),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Voltar"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+  }
+}
+
+// Classe _ClienteHeaderDelegate - DEVE estar fora da classe _InfoclienteState
 class _ClienteHeaderDelegate extends SliverPersistentHeaderDelegate {
   final Cliente cliente;
   final Color primaryColor;
@@ -1010,147 +1122,112 @@ class _ClienteHeaderDelegate extends SliverPersistentHeaderDelegate {
     
     return Material(
       color: primaryColor,
-      elevation: 4.0,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Gradiente de fundo
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  primaryColor,
-                  Color.lerp(primaryColor, Colors.black, 0.2)!,
-                ],
-              ),
-            ),
+      elevation: isCollapsed ? 4 : 0,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              primaryColor,
+              primaryColor.withValues(alpha: 0.8),
+            ],
           ),
-          
-          // Conteúdo que aparece quando expandido
-          Opacity(
-            opacity: 1.0 - progress,
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(
-                      cliente.nomcli,
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            "Código: ${cliente.codcli}",
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        if (cliente.staati.isNotEmpty)
-                          _buildStatusChip(cliente.staati),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "Limite: ${formatarValor(cliente.vlrlimcrd)}",
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white.withOpacity(0.9),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          
-          // Conteúdo que aparece quando colapsado
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Opacity(
-              opacity: progress,
-              child: AppBar(
-                backgroundColor: Colors.transparent,
-                elevation: 0,
-                titleSpacing: 0,
-                title: Opacity(
-                  opacity: isCollapsed ? 1.0 : 0.0,
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                // Título do cliente com animação
+                AnimatedOpacity(
+                  opacity: isCollapsed ? 0.0 : 1.0,
+                  duration: const Duration(milliseconds: 200),
                   child: Text(
                     cliente.nomcli,
                     style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
                       color: Colors.white,
-                      fontWeight: FontWeight.w600,
                     ),
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
+                
+                // Código do cliente sempre visível
+                const SizedBox(height: 4),
+                Text(
+                  "Cliente #${cliente.codcli}",
+                  style: TextStyle(
+                    fontSize: isCollapsed ? 16 : 14,
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontWeight: isCollapsed ? FontWeight.w600 : FontWeight.w500,
+                  ),
+                ),
+                
+                // Informações resumidas que aparecem quando expandido
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  height: isCollapsed ? 0 : 40,
+                  child: AnimatedOpacity(
+                    opacity: isCollapsed ? 0.0 : 1.0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.location_on,
+                                size: 16,
+                                color: Colors.white70,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  "${cliente.muncli} - ${cliente.ufdcli}",
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.white70,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.account_balance_wallet,
+                              size: 16,
+                              color: Colors.white70,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              formatarValor(cliente.vlrlimcrd),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.white70,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 12),
+              ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  // Widget para exibir status do cliente
-  Widget _buildStatusChip(String status) {
-    Color backgroundColor;
-    String statusText;
-
-    // Define cores e texto com base no status
-    switch (status.toUpperCase()) {
-      case "A":
-        backgroundColor = Colors.green[700]!;
-        statusText = "Ativo";
-        break;
-      case "I":
-        backgroundColor = Colors.red[700]!;
-        statusText = "Inativo";
-        break;
-      case "B":
-        backgroundColor = Colors.orange[700]!;
-        statusText = "Bloqueado";
-        break;
-      default:
-        backgroundColor = Colors.grey[700]!;
-        statusText = status.isEmpty ? "Sem Status" : status;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        statusText,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w500,
-          fontSize: 12,
         ),
       ),
     );

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext HTTP traffic to your specific domain -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">duotecsuprilev.ddns.com.br</domain>
+        <!-- Add localhost for development if needed -->
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+    </domain-config>
+    
+    <!-- Default security settings for all other domains -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
